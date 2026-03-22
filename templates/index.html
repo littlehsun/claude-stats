@@ -2,9 +2,288 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Stats</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+
+    /* Nav */
+    .nav { background: #1a1d2e; border-bottom: 1px solid #2d3148; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; height: 52px; }
+    .nav-title { color: #a78bfa; font-weight: 700; font-size: 16px; letter-spacing: 0.5px; }
+    .nav-controls { display: flex; align-items: center; gap: 12px; }
+    .project-select { background: #252840; border: 1px solid #3d4166; color: #e2e8f0; padding: 5px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+    .project-select:focus { outline: none; border-color: #a78bfa; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; background: #1a1d2e; border-bottom: 1px solid #2d3148; padding: 0 24px; }
+    .tab { padding: 12px 20px; font-size: 13px; color: #64748b; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+    .tab:hover { color: #94a3b8; }
+    .tab.active { color: #a78bfa; border-bottom-color: #a78bfa; }
+
+    /* Main content */
+    .content { padding: 24px; max-width: 1100px; margin: 0 auto; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* KPI cards */
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+    .kpi-card { background: #1e2130; border-radius: 8px; padding: 16px; }
+    .kpi-label { font-size: 11px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 8px; }
+    .kpi-value { font-size: 24px; font-weight: 700; color: #fff; }
+    .kpi-card.purple .kpi-label { color: #a78bfa; }
+    .kpi-card.green .kpi-label { color: #34d399; }
+    .kpi-card.amber .kpi-label { color: #f59e0b; }
+    .kpi-card.blue .kpi-label { color: #60a5fa; }
+
+    /* Charts */
+    .chart-card { background: #1e2130; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+    .chart-title { font-size: 12px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: #64748b; margin-bottom: 16px; }
+    .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+
+    /* Time range toggle */
+    .range-toggle { display: flex; gap: 4px; margin-bottom: 16px; }
+    .range-btn { background: #252840; border: 1px solid #3d4166; color: #64748b; padding: 4px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+    .range-btn.active { background: #a78bfa22; border-color: #a78bfa; color: #a78bfa; }
+
+    /* Responsive */
+    @media (max-width: 700px) {
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .chart-row { grid-template-columns: 1fr; }
+    }
+  </style>
 </head>
-<body style="background:#0f1117;color:#fff;">
-  <h1>Claude Stats</h1>
+<body>
+  <nav class="nav">
+    <span class="nav-title">⚡ Claude Stats</span>
+    <div class="nav-controls">
+      <select class="project-select" id="projectSelect" onchange="onProjectChange()">
+        <option value="all">All Projects</option>
+      </select>
+    </div>
+  </nav>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('overview')">Overview</div>
+    <div class="tab" onclick="switchTab('tokens')">Tokens</div>
+    <div class="tab" onclick="switchTab('projects')">Projects</div>
+  </div>
+
+  <div class="content">
+    <!-- Overview Tab -->
+    <div class="tab-panel active" id="tab-overview">
+      <div class="kpi-grid">
+        <div class="kpi-card purple"><div class="kpi-label">Total Tokens</div><div class="kpi-value" id="kpi-total">—</div></div>
+        <div class="kpi-card green"><div class="kpi-label">Output Tokens</div><div class="kpi-value" id="kpi-output">—</div></div>
+        <div class="kpi-card amber"><div class="kpi-label">Sessions</div><div class="kpi-value" id="kpi-sessions">—</div></div>
+        <div class="kpi-card blue"><div class="kpi-label">Models Used</div><div class="kpi-value" id="kpi-models">—</div></div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-card">
+          <div class="chart-title">Model Distribution</div>
+          <canvas id="modelPieChart" height="200"></canvas>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Top Projects by Token Usage</div>
+          <canvas id="topProjectsChart" height="200"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tokens Tab -->
+    <div class="tab-panel" id="tab-tokens">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div class="range-toggle">
+          <button class="range-btn" onclick="setRange(7)">7d</button>
+          <button class="range-btn" onclick="setRange(30)">30d</button>
+          <button class="range-btn active" onclick="setRange(0)">All</button>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Daily Token Usage</div>
+        <canvas id="dailyTokenChart" height="120"></canvas>
+      </div>
+    </div>
+
+    <!-- Projects Tab -->
+    <div class="tab-panel" id="tab-projects">
+      <div class="chart-card">
+        <div class="chart-title">Token Usage by Project</div>
+        <canvas id="projectsBarChart" height="300"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let statsData = null;
+    let currentRange = 0; // 0 = all
+    let charts = {};
+
+    function fmtNum(n) {
+      if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return String(n);
+    }
+
+    async function loadProjects() {
+      const res = await fetch('/api/projects');
+      const data = await res.json();
+      const sel = document.getElementById('projectSelect');
+      data.projects.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p;
+        sel.appendChild(opt);
+      });
+    }
+
+    async function loadStats(project = 'all') {
+      const res = await fetch(`/api/stats?project=${encodeURIComponent(project)}`);
+      statsData = await res.json();
+      renderAll();
+    }
+
+    function onProjectChange() {
+      const project = document.getElementById('projectSelect').value;
+      loadStats(project);
+    }
+
+    function setRange(days) {
+      currentRange = days;
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      event.target.classList.add('active');
+      renderDailyChart();
+    }
+
+    function renderAll() {
+      renderKPIs();
+      renderModelPie();
+      renderTopProjects();
+      renderDailyChart();
+      renderProjectsBar();
+    }
+
+    function renderKPIs() {
+      const k = statsData.kpi;
+      document.getElementById('kpi-total').textContent = fmtNum(k.total_tokens);
+      document.getElementById('kpi-output').textContent = fmtNum(k.output_tokens);
+      document.getElementById('kpi-sessions').textContent = k.sessions;
+      document.getElementById('kpi-models').textContent = k.models_used;
+    }
+
+    function destroyChart(id) {
+      if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+    }
+
+    function renderModelPie() {
+      destroyChart('modelPie');
+      const dist = statsData.model_dist;
+      const colors = ['#a78bfa', '#6366f1', '#34d399', '#f59e0b', '#60a5fa'];
+      charts['modelPie'] = new Chart(document.getElementById('modelPieChart'), {
+        type: 'doughnut',
+        data: {
+          labels: dist.map(d => d.model.replace('claude-', '').replace('-4-6', ' 4.6')),
+          datasets: [{ data: dist.map(d => d.tokens), backgroundColor: colors, borderWidth: 0 }]
+        },
+        options: {
+          plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12 } } },
+          cutout: '60%'
+        }
+      });
+    }
+
+    function renderTopProjects() {
+      destroyChart('topProj');
+      const top = statsData.projects_ranked.slice(0, 8);
+      charts['topProj'] = new Chart(document.getElementById('topProjectsChart'), {
+        type: 'bar',
+        data: {
+          labels: top.map(p => p.project),
+          datasets: [
+            { label: 'Output', data: top.map(p => p.output), backgroundColor: '#a78bfa' },
+            { label: 'Cache', data: top.map(p => p.cache), backgroundColor: '#3d3166' },
+          ]
+        },
+        options: {
+          indexAxis: 'y',
+          plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10 } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#64748b', callback: v => fmtNum(v) }, grid: { color: '#2d3148' } },
+            y: { stacked: true, ticks: { color: '#94a3b8' }, grid: { display: false } }
+          }
+        }
+      });
+    }
+
+    function renderDailyChart() {
+      destroyChart('daily');
+      let { dates, input, output, cache_read, cache_create } = statsData.daily;
+      if (currentRange > 0) {
+        const cutoff = dates.length - currentRange;
+        dates = dates.slice(cutoff);
+        input = input.slice(cutoff);
+        output = output.slice(cutoff);
+        cache_read = cache_read.slice(cutoff);
+        cache_create = cache_create.slice(cutoff);
+      }
+      charts['daily'] = new Chart(document.getElementById('dailyTokenChart'), {
+        type: 'bar',
+        data: {
+          labels: dates,
+          datasets: [
+            { label: 'Output', data: output, backgroundColor: '#a78bfa', stack: 'a' },
+            { label: 'Input', data: input, backgroundColor: '#6366f1', stack: 'a' },
+            { label: 'Cache Read', data: cache_read, backgroundColor: '#1e3a5f', stack: 'a' },
+            { label: 'Cache Create', data: cache_create, backgroundColor: '#2d4a6e', stack: 'a' },
+          ]
+        },
+        options: {
+          plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10 } } },
+          scales: {
+            x: { ticks: { color: '#64748b', maxRotation: 45 }, grid: { color: '#2d3148' } },
+            y: { ticks: { color: '#64748b', callback: v => fmtNum(v) }, grid: { color: '#2d3148' } }
+          }
+        }
+      });
+    }
+
+    function renderProjectsBar() {
+      destroyChart('projBar');
+      const ranked = statsData.projects_ranked;
+      charts['projBar'] = new Chart(document.getElementById('projectsBarChart'), {
+        type: 'bar',
+        data: {
+          labels: ranked.map(p => p.project),
+          datasets: [
+            { label: 'Output', data: ranked.map(p => p.output), backgroundColor: '#a78bfa', stack: 'a' },
+            { label: 'Cache', data: ranked.map(p => p.cache), backgroundColor: '#3d3166', stack: 'a' },
+          ]
+        },
+        options: {
+          indexAxis: 'y',
+          plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10 } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#64748b', callback: v => fmtNum(v) }, grid: { color: '#2d3148' } },
+            y: { stacked: true, ticks: { color: '#94a3b8', font: { size: 11 } }, grid: { display: false } }
+          }
+        }
+      });
+    }
+
+    function switchTab(name) {
+      document.querySelectorAll('.tab').forEach((t, i) => {
+        t.classList.toggle('active', ['overview','tokens','projects'][i] === name);
+      });
+      document.querySelectorAll('.tab-panel').forEach(p => {
+        p.classList.toggle('active', p.id === 'tab-' + name);
+      });
+    }
+
+    // Init
+    loadProjects();
+    loadStats('all');
+  </script>
 </body>
 </html>
