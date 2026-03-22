@@ -95,9 +95,9 @@
     <div class="tab-panel" id="tab-tokens">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
         <div class="range-toggle">
-          <button class="range-btn" onclick="setRange(7)">7d</button>
-          <button class="range-btn" onclick="setRange(30)">30d</button>
-          <button class="range-btn active" onclick="setRange(0)">All</button>
+          <button class="range-btn" onclick="setRange(7, this)">7d</button>
+          <button class="range-btn" onclick="setRange(30, this)">30d</button>
+          <button class="range-btn active" onclick="setRange(0, this)">All</button>
         </div>
       </div>
       <div class="chart-card">
@@ -128,21 +128,31 @@
     }
 
     async function loadProjects() {
-      const res = await fetch('/api/projects');
-      const data = await res.json();
-      const sel = document.getElementById('projectSelect');
-      data.projects.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p;
-        opt.textContent = p;
-        sel.appendChild(opt);
-      });
+      try {
+        const res = await fetch('/api/projects');
+        if (!res.ok) throw new Error('Failed to load projects');
+        const data = await res.json();
+        const sel = document.getElementById('projectSelect');
+        data.projects.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p;
+          opt.textContent = p;
+          sel.appendChild(opt);
+        });
+      } catch (e) {
+        console.error('loadProjects error:', e);
+      }
     }
 
     async function loadStats(project = 'all') {
-      const res = await fetch(`/api/stats?project=${encodeURIComponent(project)}`);
-      statsData = await res.json();
-      renderAll();
+      try {
+        const res = await fetch(`/api/stats?project=${encodeURIComponent(project)}`);
+        if (!res.ok) throw new Error('Failed to load stats');
+        statsData = await res.json();
+        renderAll();
+      } catch (e) {
+        console.error('loadStats error:', e);
+      }
     }
 
     function onProjectChange() {
@@ -150,10 +160,10 @@
       loadStats(project);
     }
 
-    function setRange(days) {
+    function setRange(days, btn) {
       currentRange = days;
       document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
-      event.target.classList.add('active');
+      btn.classList.add('active');
       renderDailyChart();
     }
 
