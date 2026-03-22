@@ -91,11 +91,6 @@ def load_usage_records():
 def index():
     return render_template('index.html')
 
-@app.route('/api/debug')
-def debug():
-    records = load_usage_records()
-    return {'count': len(records), 'sample': records[:2]}
-
 @app.route('/api/projects')
 def api_projects():
     records = load_usage_records()
