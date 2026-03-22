@@ -43,6 +43,8 @@ def load_usage_records():
     }
     """
     records = []
+    if not PROJECTS_DIR.exists():
+        return records
     for proj_dir in PROJECTS_DIR.iterdir():
         if not proj_dir.is_dir():
             continue
@@ -103,10 +105,8 @@ def api_projects():
 @app.route('/api/stats')
 def api_stats():
     project_filter = request.args.get('project', 'all')
-    records = load_usage_records()
-
-    if project_filter != 'all':
-        records = [r for r in records if r['project'] == project_filter]
+    all_records = load_usage_records()
+    records = all_records if project_filter == 'all' else [r for r in all_records if r['project'] == project_filter]
 
     # KPIs
     total_input = sum(r['input_tokens'] for r in records)
@@ -122,6 +122,8 @@ def api_stats():
     # Daily breakdown — sorted by date
     daily = defaultdict(lambda: defaultdict(int))
     for r in records:
+        if r['date'] == 'unknown':
+            continue
         daily[r['date']]['input'] += r['input_tokens']
         daily[r['date']]['output'] += r['output_tokens']
         daily[r['date']]['cache_read'] += r['cache_read']
@@ -137,13 +139,13 @@ def api_stats():
     }
 
     # Model distribution
+    # Note: cache tokens excluded from model distribution (less meaningful for model attribution)
     model_totals = defaultdict(int)
     for r in records:
         model_totals[r['model']] += r['input_tokens'] + r['output_tokens']
     model_dist = [{'model': m, 'tokens': t} for m, t in sorted(model_totals.items(), key=lambda x: -x[1])]
 
     # Per-project totals (always use all records for project ranking)
-    all_records = load_usage_records()
     proj_totals = defaultdict(lambda: {'output': 0, 'cache': 0, 'total': 0})
     for r in all_records:
         proj_totals[r['project']]['output'] += r['output_tokens']
