@@ -46,6 +46,9 @@
     .range-toggle { display: flex; gap: 4px; margin-bottom: 16px; }
     .range-btn { background: #252840; border: 1px solid #3d4166; color: #64748b; padding: 4px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; }
     .range-btn.active { background: #a78bfa22; border-color: #a78bfa; color: #a78bfa; }
+    /* Hourly drilldown */
+    .drilldown-hint { color: #475569; font-size: 10px; font-style: italic; margin-left: 8px; }
+    #dailyTokenChart { cursor: pointer; }
 
     /* Responsive */
     @media (max-width: 700px) {
@@ -93,21 +96,43 @@
 
     <!-- Tokens Tab -->
     <div class="tab-panel" id="tab-tokens">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <div class="range-toggle">
-          <button class="range-btn" onclick="setRange(7, this)">7d</button>
-          <button class="range-btn" onclick="setRange(30, this)">30d</button>
-          <button class="range-btn active" onclick="setRange(0, this)">All</button>
+      <!-- Daily view -->
+      <div id="daily-view">
+        <div style="display:flex;align-items:center;margin-bottom:16px">
+          <div class="range-toggle">
+            <button class="range-btn" onclick="setRange(7, this)">7d</button>
+            <button class="range-btn" onclick="setRange(30, this)">30d</button>
+            <button class="range-btn active" onclick="setRange(0, this)">All</button>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Daily Token Usage <span class="drilldown-hint">點擊 bar 查看當日 24H 明細</span></div>
+          <canvas id="dailyTokenChart" height="120"></canvas>
         </div>
       </div>
-      <div class="chart-card">
-        <div class="chart-title">Daily Token Usage</div>
-        <canvas id="dailyTokenChart" height="120"></canvas>
+      <!-- Hourly drilldown view -->
+      <div id="hourly-view" style="display:none">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <button class="range-btn active" onclick="showDailyChart()">← Back</button>
+          <span style="color:#94a3b8;font-size:13px">24H 明細：<span id="hourly-date" style="color:#a78bfa;font-weight:600"></span></span>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Hourly Token Usage</div>
+          <canvas id="hourlyTokenChart" height="120"></canvas>
+        </div>
       </div>
     </div>
 
     <!-- Projects Tab -->
     <div class="tab-panel" id="tab-projects">
+      <div style="display:flex;align-items:center;margin-bottom:16px">
+        <div class="range-toggle" id="proj-range-toggle">
+          <button class="range-btn" onclick="setProjRange(1, this)">1D</button>
+          <button class="range-btn" onclick="setProjRange(7, this)">7D</button>
+          <button class="range-btn" onclick="setProjRange(30, this)">30D</button>
+          <button class="range-btn active" onclick="setProjRange(0, this)">ALL</button>
+        </div>
+      </div>
       <div class="chart-card">
         <div class="chart-title">Token Usage by Project</div>
         <canvas id="projectsBarChart" height="300"></canvas>
@@ -117,7 +142,9 @@
 
   <script>
     let statsData = null;
-    let currentRange = 0; // 0 = all
+    let currentRange = 0;  // 0 = all (Tokens tab range)
+    let currentProject = 'all';
+    let projRange = 0;  // 0 = all (Projects tab range)
     let charts = {};
 
     function fmtNum(n) {
@@ -156,15 +183,71 @@
     }
 
     function onProjectChange() {
-      const project = document.getElementById('projectSelect').value;
-      loadStats(project);
+      currentProject = document.getElementById('projectSelect').value;
+      loadStats(currentProject);
     }
 
     function setRange(days, btn) {
       currentRange = days;
-      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#daily-view .range-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
+      showDailyChart();
       renderDailyChart();
+    }
+
+    async function setProjRange(days, btn) {
+      projRange = days;
+      document.querySelectorAll('#proj-range-toggle .range-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      try {
+        const res = await fetch(`/api/stats?project=${encodeURIComponent(currentProject)}&proj_range=${days}`);
+        if (!res.ok) throw new Error('Failed');
+        const newData = await res.json();
+        statsData.projects_ranked = newData.projects_ranked;
+        renderProjectsBar();
+      } catch (e) {
+        console.error('setProjRange error:', e);
+      }
+    }
+
+    async function showHourlyChart(date) {
+      try {
+        const res = await fetch(`/api/hourly?date=${date}&project=${encodeURIComponent(currentProject)}`);
+        if (!res.ok) throw new Error('Failed');
+        const data = await res.json();
+
+        document.getElementById('daily-view').style.display = 'none';
+        document.getElementById('hourly-view').style.display = 'block';
+        document.getElementById('hourly-date').textContent = date;
+
+        destroyChart('hourly');
+        charts['hourly'] = new Chart(document.getElementById('hourlyTokenChart'), {
+          type: 'line',
+          data: {
+            labels: data.hours,
+            datasets: [
+              { label: 'Output', data: data.output, borderColor: '#a78bfa', backgroundColor: '#a78bfa18', fill: true, tension: 0.3, pointRadius: 3 },
+              { label: 'Input', data: data.input, borderColor: '#6366f1', backgroundColor: '#6366f118', fill: true, tension: 0.3, pointRadius: 3 },
+              { label: 'Cache Read', data: data.cache_read, borderColor: '#1e6a9f', backgroundColor: 'transparent', tension: 0.3, pointRadius: 2 },
+            ]
+          },
+          options: {
+            plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10 } } },
+            scales: {
+              x: { ticks: { color: '#64748b' }, grid: { color: '#2d3148' } },
+              y: { ticks: { color: '#64748b', callback: v => fmtNum(v) }, grid: { color: '#2d3148' } }
+            }
+          }
+        });
+      } catch (e) {
+        console.error('showHourlyChart error:', e);
+      }
+    }
+
+    function showDailyChart() {
+      document.getElementById('daily-view').style.display = 'block';
+      document.getElementById('hourly-view').style.display = 'none';
+      destroyChart('hourly');
     }
 
     function renderAll() {
@@ -250,6 +333,12 @@
           ]
         },
         options: {
+          onClick: (evt, elements) => {
+            if (elements.length > 0) {
+              const idx = elements[0].index;
+              showHourlyChart(dates[idx]);
+            }
+          },
           plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10 } } },
           scales: {
             x: { ticks: { color: '#64748b', maxRotation: 45 }, grid: { color: '#2d3148' } },

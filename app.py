@@ -2,6 +2,7 @@ from flask import Flask, render_template, request
 import json
 from pathlib import Path
 from collections import defaultdict
+from datetime import date as date_cls, timedelta
 import re
 
 PROJECTS_DIR = Path.home() / '.claude' / 'projects'
@@ -72,11 +73,13 @@ def load_usage_records():
                         if input_t == 0 and output_t == 0:
                             continue
                         ts = d.get('timestamp', '')
-                        date = ts[:10] if ts else 'unknown'
+                        date = ts[:10] if ts and len(ts) >= 10 else 'unknown'
+                        hour = ts[11:13] if ts and len(ts) >= 13 else 'unknown'
                         records.append({
                             'project': project_name,
                             'model': model,
                             'date': date,
+                            'hour': hour,
                             'input_tokens': input_t,
                             'output_tokens': output_t,
                             'cache_read': usage.get('cache_read_input_tokens', 0) or 0,
@@ -140,9 +143,16 @@ def api_stats():
         model_totals[r['model']] += r['input_tokens'] + r['output_tokens']
     model_dist = [{'model': m, 'tokens': t} for m, t in sorted(model_totals.items(), key=lambda x: -x[1])]
 
-    # Per-project totals (always use all records for project ranking)
+    # Per-project totals — optionally filtered by date range
+    proj_range_days = int(request.args.get('proj_range', '0') or '0')
+    if proj_range_days > 0:
+        cutoff = (date_cls.today() - timedelta(days=proj_range_days)).isoformat()
+        proj_records = [r for r in all_records if r['date'] != 'unknown' and r['date'] >= cutoff]
+    else:
+        proj_records = all_records
+
     proj_totals = defaultdict(lambda: {'output': 0, 'cache': 0, 'total': 0})
-    for r in all_records:
+    for r in proj_records:
         proj_totals[r['project']]['output'] += r['output_tokens']
         proj_totals[r['project']]['cache'] += r['cache_read'] + r['cache_create']
         proj_totals[r['project']]['total'] += r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create']
@@ -161,6 +171,38 @@ def api_stats():
         'daily': daily_data,
         'model_dist': model_dist,
         'projects_ranked': projects_ranked,
+    }
+
+@app.route('/api/hourly')
+def api_hourly():
+    date_str = request.args.get('date')
+    project_filter = request.args.get('project', 'all')
+    if not date_str:
+        return {'error': 'date required'}, 400
+
+    all_records = load_usage_records()
+    records = [r for r in all_records if r['date'] == date_str]
+    if project_filter != 'all':
+        records = [r for r in records if r['project'] == project_filter]
+
+    hourly = defaultdict(lambda: defaultdict(int))
+    for r in records:
+        h = r['hour']
+        if h == 'unknown':
+            continue
+        hourly[h]['input'] += r['input_tokens']
+        hourly[h]['output'] += r['output_tokens']
+        hourly[h]['cache_read'] += r['cache_read']
+        hourly[h]['cache_create'] += r['cache_create']
+
+    hours = [f'{i:02d}' for i in range(24)]
+    return {
+        'date': date_str,
+        'hours': hours,
+        'input': [hourly[h]['input'] for h in hours],
+        'output': [hourly[h]['output'] for h in hours],
+        'cache_read': [hourly[h]['cache_read'] for h in hours],
+        'cache_create': [hourly[h]['cache_create'] for h in hours],
     }
 
 if __name__ == '__main__':
