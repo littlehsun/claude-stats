@@ -6,6 +6,8 @@ import re
 
 PROJECTS_DIR = Path.home() / '.claude' / 'projects'
 
+app = Flask(__name__)
+
 def project_dir_to_name(dir_name: str) -> str:
     """Convert '-Users-hsun-Hsun-PEGAAi-2-0' to 'PEGAAi-2.0'"""
     # Strip leading '-Users-<username>-<intermediate-dir>-' prefix
@@ -82,8 +84,6 @@ def load_usage_records():
                 app.logger.warning(f"Skipping {jf}: {e}")
                 continue
     return records
-
-app = Flask(__name__)
 
 @app.route('/')
 def index():
