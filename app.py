@@ -1,7 +1,5 @@
 from flask import Flask, render_template
 import json
-import os
-import glob
 from pathlib import Path
 from collections import defaultdict
 import re
@@ -10,20 +8,19 @@ PROJECTS_DIR = Path.home() / '.claude' / 'projects'
 
 def project_dir_to_name(dir_name: str) -> str:
     """Convert '-Users-hsun-Hsun-PEGAAi-2-0' to 'PEGAAi-2.0'"""
-    # Strip leading '-Users-<username>-Hsun-' or '-Users-<username>-' prefix
+    # Strip leading '-Users-<username>-<intermediate-dir>-' prefix
     parts = dir_name.lstrip('-').split('-')
-    # Drop 'Users' and next token (username), and 'Hsun' if present
-    skip = {'Users'}
-    result = []
-    skip_next = False
-    for i, part in enumerate(parts):
-        if part in skip:
-            skip_next = True
-            continue
-        if skip_next:
-            skip_next = False
-            continue
-        result.append(part)
+
+    # Skip: 'Users', the username (next part), and the intermediate directory (third part)
+    # Pattern: -Users-<username>-<intermediate-dir>-<project-name-parts>...
+    skip_count = 0
+    if len(parts) > 0 and parts[0] == 'Users':
+        skip_count = 3  # Skip 'Users', username, and intermediate dir
+
+    # For edge cases like '-Users-hsun' with no further parts
+    skip_count = min(skip_count, len(parts))
+
+    result = parts[skip_count:]
     name = '-'.join(result)
     # Convert trailing digits with separator back (e.g. '2-0' -> '2.0')
     # Simple heuristic: replace '-' between digits with '.'
@@ -81,7 +78,8 @@ def load_usage_records():
                             'cache_read': usage.get('cache_read_input_tokens', 0) or 0,
                             'cache_create': usage.get('cache_creation_input_tokens', 0) or 0,
                         })
-            except Exception:
+            except Exception as e:
+                app.logger.warning(f"Skipping {jf}: {e}")
                 continue
     return records
 
