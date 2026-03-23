@@ -214,9 +214,11 @@
       }
     }
 
+    const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
     async function loadStats(project = 'all', dailyRange = 0) {
       try {
-        const res = await fetch(`/api/stats?project=${encodeURIComponent(project)}&daily_range=${dailyRange}`);
+        const res = await fetch(`/api/stats?project=${encodeURIComponent(project)}&daily_range=${dailyRange}&tz=${encodeURIComponent(BROWSER_TZ)}`);
         if (!res.ok) throw new Error('Failed to load stats');
         statsData = await res.json();
         renderAll();
@@ -243,7 +245,7 @@
       document.querySelectorAll('#proj-range-toggle .range-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       try {
-        const res = await fetch(`/api/stats?project=${encodeURIComponent(currentProject)}&proj_range=${days}`);
+        const res = await fetch(`/api/stats?project=${encodeURIComponent(currentProject)}&proj_range=${days}&tz=${encodeURIComponent(BROWSER_TZ)}`);
         if (!res.ok) throw new Error('Failed');
         const newData = await res.json();
         statsData.projects_ranked = newData.projects_ranked;
@@ -255,7 +257,7 @@
 
     async function showHourlyChart(date) {
       try {
-        const res = await fetch(`/api/hourly?date=${date}&project=${encodeURIComponent(currentProject)}`);
+        const res = await fetch(`/api/hourly?date=${date}&project=${encodeURIComponent(currentProject)}&tz=${encodeURIComponent(BROWSER_TZ)}`);
         if (!res.ok) throw new Error('Failed');
         const data = await res.json();
 

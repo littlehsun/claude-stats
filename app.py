@@ -2,8 +2,9 @@ from flask import Flask, render_template, request
 import json
 from pathlib import Path
 from collections import defaultdict
-from datetime import date as date_cls, timedelta
+from datetime import date as date_cls, timedelta, datetime
 from functools import lru_cache
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 
 PROJECTS_DIR = Path.home() / '.claude' / 'projects'
@@ -85,13 +86,24 @@ def project_dir_to_name(dir_name: str) -> str:
     name = Path(path.replace('~', str(_HOST_HOME), 1)).name
     return name or dir_name
 
-def load_usage_records():
+def _parse_tz(tz_name: str):
+    """Return a ZoneInfo object for tz_name, falling back to local timezone."""
+    if tz_name:
+        try:
+            return ZoneInfo(tz_name)
+        except (ZoneInfoNotFoundError, KeyError):
+            pass
+    return datetime.now().astimezone().tzinfo
+
+
+def load_usage_records(tz=None):
     """
     Returns list of dicts:
     {
       'project': str,       # human-readable project name
       'model': str,         # e.g. 'claude-sonnet-4-6'
-      'date': str,          # 'YYYY-MM-DD'
+      'date': str,          # 'YYYY-MM-DD' in the given timezone
+      'hour': str,          # 'HH' in the given timezone
       'input_tokens': int,
       'output_tokens': int,
       'cache_read': int,
@@ -128,8 +140,18 @@ def load_usage_records():
                         if input_t == 0 and output_t == 0:
                             continue
                         ts = d.get('timestamp', '')
-                        date = ts[:10] if ts and len(ts) >= 10 else 'unknown'
-                        hour = ts[11:13] if ts and len(ts) >= 13 else 'unknown'
+                        if ts and len(ts) >= 10:
+                            try:
+                                dt_utc = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                                dt_local = dt_utc.astimezone(tz)
+                                date = dt_local.strftime('%Y-%m-%d')
+                                hour = dt_local.strftime('%H')
+                            except (ValueError, Exception):
+                                date = ts[:10]
+                                hour = ts[11:13] if len(ts) >= 13 else 'unknown'
+                        else:
+                            date = 'unknown'
+                            hour = 'unknown'
                         records.append({
                             'project': project_name,
                             'model': model,
@@ -166,7 +188,8 @@ def api_projects():
 @app.route('/api/stats')
 def api_stats():
     project_filter = request.args.get('project', 'all')
-    all_records = load_usage_records()
+    tz = _parse_tz(request.args.get('tz', ''))
+    all_records = load_usage_records(tz)
     records = all_records if project_filter == 'all' else [r for r in all_records if r['project'] == project_filter]
 
     # KPIs
@@ -180,8 +203,8 @@ def api_stats():
     # Count unique sessions (approximate via unique dates+project combos)
     sessions = len({(r['project'], r['date']) for r in records})
 
-    # Today's stats
-    today_str = date_cls.today().isoformat()
+    # Today's stats — use the same timezone as records
+    today_str = datetime.now(tz).strftime('%Y-%m-%d')
     today_records = [r for r in records if r['date'] == today_str]
     today_tokens = sum(r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create'] for r in today_records)
     today_output = sum(r['output_tokens'] for r in today_records)
@@ -195,14 +218,14 @@ def api_stats():
         streak += 1
         check = (date_cls.fromisoformat(check) - timedelta(days=1)).isoformat()
     if streak == 0:
-        check = (date_cls.today() - timedelta(days=1)).isoformat()
+        check = (date_cls.fromisoformat(today_str) - timedelta(days=1)).isoformat()
         while check in all_dates_activity:
             streak += 1
             check = (date_cls.fromisoformat(check) - timedelta(days=1)).isoformat()
 
     # Daily breakdown — optionally filtered by date range
     daily_range_days = int(request.args.get('daily_range', '0') or '0')
-    daily_cutoff = (date_cls.today() - timedelta(days=daily_range_days)).isoformat() if daily_range_days > 0 else None
+    daily_cutoff = (date_cls.fromisoformat(today_str) - timedelta(days=daily_range_days)).isoformat() if daily_range_days > 0 else None
 
     daily = defaultdict(lambda: defaultdict(int))
     for r in records:
@@ -249,7 +272,7 @@ def api_stats():
     # Per-project totals — optionally filtered by date range
     proj_range_days = int(request.args.get('proj_range', '0') or '0')
     if proj_range_days > 0:
-        cutoff = (date_cls.today() - timedelta(days=proj_range_days)).isoformat()
+        cutoff = (date_cls.fromisoformat(today_str) - timedelta(days=proj_range_days)).isoformat()
         proj_records = [r for r in all_records if r['date'] != 'unknown' and r['date'] >= cutoff]
     else:
         proj_records = all_records
@@ -295,7 +318,8 @@ def api_hourly():
     if not date_str:
         return {'error': 'date required'}, 400
 
-    all_records = load_usage_records()
+    tz = _parse_tz(request.args.get('tz', ''))
+    all_records = load_usage_records(tz)
     records = [r for r in all_records if r['date'] == date_str]
     if project_filter != 'all':
         records = [r for r in records if r['project'] == project_filter]

@@ -1,11 +1,13 @@
 # Claude Stats
 
+[繁體中文](./README.zh-TW.md)
+
 A local web dashboard to visualize your [Claude Code](https://claude.ai/code) usage — token consumption, model distribution, and per-project breakdown.
 
 Reads data directly from `~/.claude/projects/` with no setup required beyond Docker (or Python).
 
 ![dark dashboard with token charts](https://img.shields.io/badge/theme-dark-1e2130?style=flat-square)
-![python](https://img.shields.io/badge/python-3.8+-blue?style=flat-square)
+![python](https://img.shields.io/badge/python-3.12+-blue?style=flat-square)
 ![flask](https://img.shields.io/badge/flask-latest-green?style=flat-square)
 
 ## Features
@@ -17,6 +19,7 @@ Reads data directly from `~/.claude/projects/` with no setup required beyond Doc
 - **Tokens** — Daily stacked bar (input / output / cache read / cache create) + Output by Model breakdown, 7d/30d/All filter, click any bar to drill into 24-hour hourly view
 - **Projects** — All projects ranked by token usage, with 1D/7D/30D/ALL time range filter
 - **Project filter** — Nav dropdown to scope all charts to a single project
+- **Automatic timezone** — All timestamps are converted to your browser's local timezone; works correctly for any timezone worldwide with no configuration needed
 
 ## Quick Start (Docker)
 
@@ -68,3 +71,7 @@ All data is read locally from `~/.claude/projects/`. Each subdirectory is a proj
 | `cache_create` | `message.usage.cache_creation_input_tokens` |
 
 No data leaves your machine.
+
+## Timezone
+
+Timestamps in the raw data are stored in UTC. The dashboard automatically detects your browser's local timezone and converts all dates and hours accordingly — daily charts, the heatmap, hourly drilldowns, and today's stats all reflect your local time. No configuration is required.
