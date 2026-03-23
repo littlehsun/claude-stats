@@ -33,18 +33,20 @@ def _encoded_home_prefix() -> str:
     if not names:
         return ''
     from os.path import commonprefix
-    return commonprefix(names)  # e.g. '-home-michael-lin'
+    # Filter to dirs that look like encoded absolute home paths (≥2 dashes).
+    # This excludes outliers like '-tmp' which would shorten the common prefix
+    # to just '-' and break all path decoding.
+    home_like = [n for n in names if n.count('-') >= 2]
+    return commonprefix(home_like or names)  # e.g. '-home-michael-lin'
 
 
 @lru_cache(maxsize=None)
 def dir_name_to_path(dir_name: str) -> str:
     """Reconstruct the exact original path by fuzzy-matching against the filesystem.
 
-    Steps:
-    1. Strip the common encoded home prefix (auto-detected from all dir_names).
-    2. Walk _HOST_HOME (/host-home in Docker, Path.home() otherwise) greedily,
-       matching the longest directory name whose normalized form matches the next
-       segment(s) of the encoded remainder.
+    Uses backtracking to avoid false sibling matches. Hidden directories (dot-prefixed)
+    are excluded to prevent ~/.claude etc. from being matched as path components.
+    Falls back to single-step greedy advance for deleted/missing directories.
     """
     home_prefix = _encoded_home_prefix()
     if not home_prefix or not dir_name.startswith(home_prefix):
@@ -55,27 +57,49 @@ def dir_name_to_path(dir_name: str) -> str:
         return '~'
 
     parts = _norm(remainder).split('-')
-    current = _HOST_HOME
-    i = 0
+    orig_parts = remainder.split('-')
 
-    while i < len(parts):
-        matched = False
+    def _match_child(current: Path, target: str):
+        """Yield dirs under current whose normalized name equals target (no hidden dirs)."""
+        try:
+            for child in current.iterdir():
+                if child.is_dir() and not child.name.startswith('.') and _norm(child.name) == target:
+                    yield child
+        except OSError:
+            pass
+
+    def _resolve(current: Path, i: int):
+        """Backtracking resolve: returns Path if parts[i:] fully resolve, else None."""
+        if i == len(parts):
+            return current
         for j in range(len(parts), i, -1):
             target = '-'.join(parts[i:j])
-            try:
-                for child in current.iterdir():
-                    if child.is_dir() and _norm(child.name) == target:
-                        current = child
-                        i = j
-                        matched = True
-                        break
-            except OSError:
-                pass
-            if matched:
-                break
-        if not matched:
-            current = current / '-'.join(parts[i:])
+            for child in _match_child(current, target):
+                result = _resolve(child, j)
+                if result is not None:
+                    return result
+        return None
+
+    result = _resolve(_HOST_HOME, 0)
+    if result is not None:
+        return str(result).replace(str(_HOST_HOME), '~', 1)
+
+    # Fallback for deleted/missing dirs: single-step greedy advance (one part at a time),
+    # stopping at the first unresolvable segment and treating the rest as the project name.
+    current = _HOST_HOME
+    i = 0
+    while i < len(parts):
+        matched = False
+        for child in _match_child(current, parts[i]):
+            current = child
+            i += 1
+            matched = True
             break
+        if not matched:
+            break
+
+    if i < len(parts):
+        current = current / '-'.join(orig_parts[i:])
 
     return str(current).replace(str(_HOST_HOME), '~', 1)
 
