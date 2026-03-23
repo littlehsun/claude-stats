@@ -36,6 +36,10 @@
     .kpi-card.green .kpi-label { color: #34d399; }
     .kpi-card.amber .kpi-label { color: #f59e0b; }
     .kpi-card.blue .kpi-label { color: #60a5fa; }
+    .kpi-card.orange .kpi-label { color: #fb923c; }
+    .kpi-card.teal .kpi-label { color: #2dd4bf; }
+    .kpi-card.pink .kpi-label { color: #f472b6; }
+    .kpi-card.red .kpi-label { color: #f87171; }
 
     /* Charts */
     .chart-card { background: #1e2130; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
@@ -49,6 +53,11 @@
     /* Hourly drilldown */
     .drilldown-hint { color: #475569; font-size: 10px; font-style: italic; margin-left: 8px; }
     #dailyTokenChart { cursor: pointer; }
+
+    /* Heatmap */
+    #heatmapCanvas { display: block; }
+    .heatmap-legend { display: flex; align-items: center; gap: 4px; margin-top: 10px; font-size: 11px; color: #64748b; }
+    .heatmap-legend span.sq { display: inline-block; width: 13px; height: 13px; border-radius: 2px; }
 
     /* Responsive */
     @media (max-width: 700px) {
@@ -76,7 +85,21 @@
   <div class="content">
     <!-- Overview Tab -->
     <div class="tab-panel active" id="tab-overview">
+      <div class="chart-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div class="chart-title" style="margin:0">Activity Heatmap</div>
+          <div id="heatmap-tooltip" style="color:#94a3b8;font-size:12px"></div>
+        </div>
+        <div style="overflow-x:auto">
+          <canvas id="heatmapCanvas"></canvas>
+        </div>
+        <div class="heatmap-legend" id="heatmap-legend"></div>
+      </div>
       <div class="kpi-grid">
+        <div class="kpi-card orange"><div class="kpi-label">Today's Tokens</div><div class="kpi-value" id="kpi-today-tokens">—</div></div>
+        <div class="kpi-card teal"><div class="kpi-label">Today's Output</div><div class="kpi-value" id="kpi-today-output">—</div></div>
+        <div class="kpi-card pink"><div class="kpi-label">Today's Sessions</div><div class="kpi-value" id="kpi-today-sessions">—</div></div>
+        <div class="kpi-card red"><div class="kpi-label">Streak</div><div class="kpi-value" id="kpi-streak">—</div></div>
         <div class="kpi-card purple"><div class="kpi-label">Total Tokens</div><div class="kpi-value" id="kpi-total">—</div></div>
         <div class="kpi-card green"><div class="kpi-label">Output Tokens</div><div class="kpi-value" id="kpi-output">—</div></div>
         <div class="kpi-card amber"><div class="kpi-label">Sessions</div><div class="kpi-value" id="kpi-sessions">—</div></div>
@@ -109,7 +132,12 @@
           <div class="chart-title">Daily Token Usage <span class="drilldown-hint">點擊 bar 查看當日 24H 明細</span></div>
           <canvas id="dailyTokenChart" height="120"></canvas>
         </div>
+        <div class="chart-card">
+          <div class="chart-title">Output Tokens by Model (Daily)</div>
+          <canvas id="modelDailyChart" height="120"></canvas>
+        </div>
       </div>
+
       <!-- Hourly drilldown view -->
       <div id="hourly-view" style="display:none">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
@@ -147,6 +175,20 @@
     let projRange = 0;  // 0 = all (Projects tab range)
     let charts = {};
 
+    function fmtModel(model) {
+      // claude-opus-4-6 → Opus 4.6
+      // claude-sonnet-4-5-20250929 → Sonnet 4.5
+      // claude-haiku-4-5-20251001 → Haiku 4.5
+      // claude-sonnet-4-6 → Sonnet 4.6
+      const m = model.replace(/^claude-/, '');
+      const match = m.match(/^(opus|sonnet|haiku)-(\d+)-(\d+)/i);
+      if (match) {
+        const family = match[1].charAt(0).toUpperCase() + match[1].slice(1);
+        return `${family} ${match[2]}.${match[3]}`;
+      }
+      return model;
+    }
+
     function fmtNum(n) {
       if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
       if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
@@ -160,10 +202,11 @@
         if (!res.ok) throw new Error('Failed to load projects');
         const data = await res.json();
         const sel = document.getElementById('projectSelect');
-        data.projects.forEach(p => {
+        data.projects.forEach(({ name, path }) => {
           const opt = document.createElement('option');
-          opt.value = p;
-          opt.textContent = p;
+          opt.value = name;
+          opt.textContent = name;
+          opt.title = path;
           sel.appendChild(opt);
         });
       } catch (e) {
@@ -171,9 +214,9 @@
       }
     }
 
-    async function loadStats(project = 'all') {
+    async function loadStats(project = 'all', dailyRange = 0) {
       try {
-        const res = await fetch(`/api/stats?project=${encodeURIComponent(project)}`);
+        const res = await fetch(`/api/stats?project=${encodeURIComponent(project)}&daily_range=${dailyRange}`);
         if (!res.ok) throw new Error('Failed to load stats');
         statsData = await res.json();
         renderAll();
@@ -184,7 +227,7 @@
 
     function onProjectChange() {
       currentProject = document.getElementById('projectSelect').value;
-      loadStats(currentProject);
+      loadStats(currentProject, currentRange);
     }
 
     function setRange(days, btn) {
@@ -192,7 +235,7 @@
       document.querySelectorAll('#daily-view .range-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       showDailyChart();
-      renderDailyChart();
+      loadStats(currentProject, currentRange);
     }
 
     async function setProjRange(days, btn) {
@@ -255,7 +298,9 @@
       renderModelPie();
       renderTopProjects();
       renderDailyChart();
+      renderModelDaily();
       renderProjectsBar();
+      renderHeatmap(statsData.heatmap);
     }
 
     function renderKPIs() {
@@ -264,6 +309,10 @@
       document.getElementById('kpi-output').textContent = fmtNum(k.output_tokens);
       document.getElementById('kpi-sessions').textContent = k.sessions;
       document.getElementById('kpi-models').textContent = k.models_used;
+      document.getElementById('kpi-today-tokens').textContent = fmtNum(k.today_tokens);
+      document.getElementById('kpi-today-output').textContent = fmtNum(k.today_output);
+      document.getElementById('kpi-today-sessions').textContent = k.today_sessions;
+      document.getElementById('kpi-streak').textContent = k.streak ? `${k.streak}d` : '—';
     }
 
     function destroyChart(id) {
@@ -277,7 +326,7 @@
       charts['modelPie'] = new Chart(document.getElementById('modelPieChart'), {
         type: 'doughnut',
         data: {
-          labels: dist.map(d => d.model.replace('claude-', '').replace('-4-6', ' 4.6')),
+          labels: dist.map(d => fmtModel(d.model)),
           datasets: [{ data: dist.map(d => d.tokens), backgroundColor: colors, borderWidth: 0 }]
         },
         options: {
@@ -312,15 +361,7 @@
 
     function renderDailyChart() {
       destroyChart('daily');
-      let { dates, input, output, cache_read, cache_create } = statsData.daily;
-      if (currentRange > 0) {
-        const cutoff = dates.length - currentRange;
-        dates = dates.slice(cutoff);
-        input = input.slice(cutoff);
-        output = output.slice(cutoff);
-        cache_read = cache_read.slice(cutoff);
-        cache_create = cache_create.slice(cutoff);
-      }
+      const { dates, input, output, cache_read, cache_create } = statsData.daily;
       charts['daily'] = new Chart(document.getElementById('dailyTokenChart'), {
         type: 'bar',
         data: {
@@ -371,6 +412,131 @@
       });
     }
 
+    const MODEL_COLORS = ['#a78bfa','#34d399','#f59e0b','#60a5fa','#f472b6','#fb923c','#2dd4bf','#818cf8'];
+
+    function renderModelDaily() {
+      destroyChart('modelDaily');
+      const { models, dates, series } = statsData.daily_by_model;
+      if (!models.length) return;
+      charts['modelDaily'] = new Chart(document.getElementById('modelDailyChart'), {
+        type: 'bar',
+        data: {
+          labels: dates,
+          datasets: models.map((m, i) => ({
+            label: fmtModel(m),
+            data: series[m],
+            backgroundColor: MODEL_COLORS[i % MODEL_COLORS.length],
+            stack: 'a',
+          }))
+        },
+        options: {
+          plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10 } } },
+          scales: {
+            x: { ticks: { color: '#64748b', maxRotation: 45 }, grid: { color: '#2d3148' } },
+            y: { ticks: { color: '#64748b', callback: v => fmtNum(v) }, grid: { color: '#2d3148' } }
+          }
+        }
+      });
+    }
+
+    function renderHeatmap(heatmapData) {
+      const canvas = document.getElementById('heatmapCanvas');
+      const ctx = canvas.getContext('2d');
+      const CELL = 13, GAP = 2, STEP = CELL + GAP;
+      const PAD_LEFT = 32, PAD_TOP = 22;
+      const WEEKS = 53;
+      canvas.width = PAD_LEFT + WEEKS * STEP;
+      canvas.height = PAD_TOP + 7 * STEP + 4;
+
+      const COLORS = ['#1e2130', '#2d2550', '#4a3a8a', '#7c5cbf', '#a78bfa'];
+      const vals = Object.values(heatmapData).filter(v => v > 0);
+      const maxVal = vals.length ? Math.max(...vals) : 1;
+
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(start.getDate() - (WEEKS * 7 - 1));
+      start.setDate(start.getDate() - start.getDay()); // align to Sunday
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const monthLabels = {};
+
+      for (let w = 0; w < WEEKS; w++) {
+        for (let d = 0; d < 7; d++) {
+          const date = new Date(start);
+          date.setDate(start.getDate() + w * 7 + d);
+          if (date > today) continue;
+          const dateStr = date.toISOString().slice(0, 10);
+          const tokens = heatmapData[dateStr] || 0;
+
+          if (d === 0) {
+            const prev = new Date(date);
+            prev.setDate(prev.getDate() - 7);
+            if (prev.getMonth() !== date.getMonth())
+              monthLabels[w] = date.toLocaleDateString('en-US', { month: 'short' });
+          }
+
+          let level = 0;
+          if (tokens > 0) {
+            const r = tokens / maxVal;
+            level = r < 0.15 ? 1 : r < 0.4 ? 2 : r < 0.7 ? 3 : 4;
+          }
+
+          ctx.fillStyle = COLORS[level];
+          ctx.beginPath();
+          ctx.roundRect(PAD_LEFT + w * STEP, PAD_TOP + d * STEP, CELL, CELL, 2);
+          ctx.fill();
+        }
+      }
+
+      // Month labels
+      ctx.fillStyle = '#64748b';
+      ctx.font = '10px -apple-system, sans-serif';
+      ctx.textAlign = 'left';
+      for (const [w, label] of Object.entries(monthLabels))
+        ctx.fillText(label, PAD_LEFT + Number(w) * STEP, 13);
+
+      // Day labels (Mon / Wed / Fri)
+      ['', 'Mon', '', 'Wed', '', 'Fri', ''].forEach((label, i) => {
+        if (!label) return;
+        ctx.fillStyle = '#64748b';
+        ctx.font = '10px -apple-system, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(label, PAD_LEFT - 5, PAD_TOP + i * STEP + CELL - 1);
+      });
+
+      // Legend
+      const legend = document.getElementById('heatmap-legend');
+      legend.innerHTML = '<span>Less</span>';
+      COLORS.forEach(c => {
+        legend.innerHTML += `<span class="sq" style="background:${c}"></span>`;
+      });
+      legend.innerHTML += '<span>More</span>';
+
+      // Hover tooltip
+      canvas.onmousemove = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const mx = (e.clientX - rect.left) * scaleX;
+        const my = (e.clientY - rect.top) * scaleY;
+        const w = Math.floor((mx - PAD_LEFT) / STEP);
+        const d = Math.floor((my - PAD_TOP) / STEP);
+        const tip = document.getElementById('heatmap-tooltip');
+        if (w >= 0 && w < WEEKS && d >= 0 && d < 7) {
+          const date = new Date(start);
+          date.setDate(start.getDate() + w * 7 + d);
+          if (date <= today) {
+            const dateStr = date.toISOString().slice(0, 10);
+            const tokens = heatmapData[dateStr] || 0;
+            tip.textContent = `${dateStr}  ${tokens > 0 ? fmtNum(tokens) + ' tokens' : 'no activity'}`;
+            return;
+          }
+        }
+        tip.textContent = '';
+      };
+      canvas.onmouseleave = () => { document.getElementById('heatmap-tooltip').textContent = ''; };
+    }
+
     function switchTab(name) {
       document.querySelectorAll('.tab').forEach((t, i) => {
         t.classList.toggle('active', ['overview','tokens','projects'][i] === name);
@@ -382,7 +548,7 @@
 
     // Init
     loadProjects();
-    loadStats('all');
+    loadStats('all', currentRange);
   </script>
 </body>
 </html>

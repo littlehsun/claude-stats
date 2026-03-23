@@ -8,3 +8,4 @@ services:
       - PORT=${PORT:-5050}
     volumes:
       - "${HOME}/.claude/projects:/root/.claude/projects:ro"
+      - "${HOME}:/host-home:ro"

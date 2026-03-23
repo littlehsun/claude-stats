@@ -3,31 +3,86 @@ import json
 from pathlib import Path
 from collections import defaultdict
 from datetime import date as date_cls, timedelta
+from functools import lru_cache
 import re
 
 PROJECTS_DIR = Path.home() / '.claude' / 'projects'
 
+# When running in Docker, $HOME is mounted at /host-home so we can do
+# filesystem-based path reconstruction against the real host home.
+_HOST_HOME = Path('/host-home') if Path('/host-home').is_dir() else Path.home()
+
 app = Flask(__name__)
 
+def _norm(s: str) -> str:
+    """Normalize for fuzzy matching: lowercase, collapse non-alphanumeric to '-'."""
+    return re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')
+
+
+@lru_cache(maxsize=None)
+def _encoded_home_prefix() -> str:
+    """Infer the encoded home-directory prefix from the common prefix of all project dir_names.
+
+    Works in Docker too: dir_names encode host paths, so we don't rely on
+    Path.home() (which would return /root in Docker).
+    """
+    if not PROJECTS_DIR.exists():
+        return ''
+    names = [d.name for d in PROJECTS_DIR.iterdir() if d.is_dir()]
+    if not names:
+        return ''
+    from os.path import commonprefix
+    return commonprefix(names)  # e.g. '-home-michael-lin'
+
+
+@lru_cache(maxsize=None)
+def dir_name_to_path(dir_name: str) -> str:
+    """Reconstruct the exact original path by fuzzy-matching against the filesystem.
+
+    Steps:
+    1. Strip the common encoded home prefix (auto-detected from all dir_names).
+    2. Walk _HOST_HOME (/host-home in Docker, Path.home() otherwise) greedily,
+       matching the longest directory name whose normalized form matches the next
+       segment(s) of the encoded remainder.
+    """
+    home_prefix = _encoded_home_prefix()
+    if not home_prefix or not dir_name.startswith(home_prefix):
+        return '/' + dir_name.lstrip('-')
+
+    remainder = dir_name[len(home_prefix):].lstrip('-')  # e.g. 'Hsun-PegaAgentMVP'
+    if not remainder:
+        return '~'
+
+    parts = _norm(remainder).split('-')
+    current = _HOST_HOME
+    i = 0
+
+    while i < len(parts):
+        matched = False
+        for j in range(len(parts), i, -1):
+            target = '-'.join(parts[i:j])
+            try:
+                for child in current.iterdir():
+                    if child.is_dir() and _norm(child.name) == target:
+                        current = child
+                        i = j
+                        matched = True
+                        break
+            except OSError:
+                pass
+            if matched:
+                break
+        if not matched:
+            current = current / '-'.join(parts[i:])
+            break
+
+    return str(current).replace(str(_HOST_HOME), '~', 1)
+
+
 def project_dir_to_name(dir_name: str) -> str:
-    """Convert '-Users-hsun-Hsun-PEGAAi-2-0' to 'PEGAAi-2.0'"""
-    # Strip leading '-Users-<username>-<intermediate-dir>-' prefix
-    parts = dir_name.lstrip('-').split('-')
-
-    # Skip: 'Users', the username (next part), and the intermediate directory (third part)
-    # Pattern: -Users-<username>-<intermediate-dir>-<project-name-parts>...
-    skip_count = 0
-    if len(parts) > 0 and parts[0] == 'Users':
-        skip_count = 3  # Skip 'Users', username, and intermediate dir
-
-    # For edge cases like '-Users-hsun' with no further parts
-    skip_count = min(skip_count, len(parts))
-
-    result = parts[skip_count:]
-    name = '-'.join(result)
-    # Convert trailing digits with separator back (e.g. '2-0' -> '2.0')
-    # Simple heuristic: replace '-' between digits with '.'
-    name = re.sub(r'(\d)-(\d)', r'\1.\2', name)
+    """Short display name = last component of the reconstructed path."""
+    path = dir_name_to_path(dir_name)
+    name = Path(path.replace('~', str(_HOST_HOME), 1)).name
     return name or dir_name
 
 def load_usage_records():
@@ -96,8 +151,16 @@ def index():
 
 @app.route('/api/projects')
 def api_projects():
-    records = load_usage_records()
-    projects = sorted({r['project'] for r in records})
+    projects = []
+    seen = set()
+    if PROJECTS_DIR.exists():
+        for proj_dir in sorted(PROJECTS_DIR.iterdir()):
+            if not proj_dir.is_dir():
+                continue
+            name = project_dir_to_name(proj_dir.name)
+            if name not in seen:
+                seen.add(name)
+                projects.append({'name': name, 'path': dir_name_to_path(proj_dir.name)})
     return {'projects': projects}
 
 @app.route('/api/stats')
@@ -117,10 +180,35 @@ def api_stats():
     # Count unique sessions (approximate via unique dates+project combos)
     sessions = len({(r['project'], r['date']) for r in records})
 
-    # Daily breakdown — sorted by date
+    # Today's stats
+    today_str = date_cls.today().isoformat()
+    today_records = [r for r in records if r['date'] == today_str]
+    today_tokens = sum(r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create'] for r in today_records)
+    today_output = sum(r['output_tokens'] for r in today_records)
+    today_sessions = len({r['project'] for r in today_records})
+
+    # Streak — use unfiltered records so range selection doesn't break it
+    all_dates_activity = {r['date'] for r in records if r['date'] != 'unknown'}
+    streak = 0
+    check = today_str
+    while check in all_dates_activity:
+        streak += 1
+        check = (date_cls.fromisoformat(check) - timedelta(days=1)).isoformat()
+    if streak == 0:
+        check = (date_cls.today() - timedelta(days=1)).isoformat()
+        while check in all_dates_activity:
+            streak += 1
+            check = (date_cls.fromisoformat(check) - timedelta(days=1)).isoformat()
+
+    # Daily breakdown — optionally filtered by date range
+    daily_range_days = int(request.args.get('daily_range', '0') or '0')
+    daily_cutoff = (date_cls.today() - timedelta(days=daily_range_days)).isoformat() if daily_range_days > 0 else None
+
     daily = defaultdict(lambda: defaultdict(int))
     for r in records:
         if r['date'] == 'unknown':
+            continue
+        if daily_cutoff and r['date'] < daily_cutoff:
             continue
         daily[r['date']]['input'] += r['input_tokens']
         daily[r['date']]['output'] += r['output_tokens']
@@ -134,6 +222,21 @@ def api_stats():
         'output': [daily[d]['output'] for d in sorted_dates],
         'cache_read': [daily[d]['cache_read'] for d in sorted_dates],
         'cache_create': [daily[d]['cache_create'] for d in sorted_dates],
+    }
+
+    # Daily breakdown by model (output tokens only, same date filter)
+    model_daily = defaultdict(lambda: defaultdict(int))
+    for r in records:
+        if r['date'] == 'unknown':
+            continue
+        if daily_cutoff and r['date'] < daily_cutoff:
+            continue
+        model_daily[r['model']][r['date']] += r['output_tokens']
+    daily_models = sorted(model_daily.keys())
+    daily_by_model = {
+        'models': daily_models,
+        'dates': sorted_dates,
+        'series': {m: [model_daily[m].get(d, 0) for d in sorted_dates] for m in daily_models},
     }
 
     # Model distribution
@@ -161,16 +264,28 @@ def api_stats():
         key=lambda x: -x['total']
     )
 
+    # Heatmap — all projects, all time (ignore project/date filters)
+    heatmap_totals = defaultdict(int)
+    for r in all_records:
+        if r['date'] != 'unknown':
+            heatmap_totals[r['date']] += r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create']
+
     return {
         'kpi': {
             'total_tokens': total_tokens,
             'output_tokens': total_output,
             'sessions': sessions,
             'models_used': len(models_used),
+            'today_tokens': today_tokens,
+            'today_output': today_output,
+            'today_sessions': today_sessions,
+            'streak': streak,
         },
         'daily': daily_data,
+        'daily_by_model': daily_by_model,
         'model_dist': model_dist,
         'projects_ranked': projects_ranked,
+        'heatmap': dict(heatmap_totals),
     }
 
 @app.route('/api/hourly')

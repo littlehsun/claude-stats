@@ -10,10 +10,13 @@ Reads data directly from `~/.claude/projects/` with no setup required beyond Doc
 
 ## Features
 
-- **Overview** — KPI cards (total tokens, output tokens, sessions, models used), model distribution donut chart, top projects ranking
-- **Tokens** — Daily stacked bar chart (input / output / cache read / cache create), 7d/30d/All filter, click any bar to drill into 24-hour hourly breakdown
+- **Activity Heatmap** — GitHub-style 52-week calendar at the top of Overview; purple intensity shows daily token volume; hover to see exact date and count
+- **Today's stats** — KPI cards for today's tokens, output, and active sessions updated on every load
+- **Streak** — Consecutive days with any Claude usage, so the streak counter stays accurate even if today hasn't started yet
+- **Overview** — 8 KPI cards (today + all-time), model distribution donut chart, top projects ranking
+- **Tokens** — Daily stacked bar (input / output / cache read / cache create) + Output by Model breakdown, 7d/30d/All filter, click any bar to drill into 24-hour hourly view
 - **Projects** — All projects ranked by token usage, with 1D/7D/30D/ALL time range filter
-- **Project filter** — Nav dropdown to filter all charts by a single project
+- **Project filter** — Nav dropdown to scope all charts to a single project
 
 ## Quick Start (Docker)
 
