@@ -37,20 +37,20 @@
       --accent-green: #34d399;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0f1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+    body { background: var(--bg); color: var(--text-primary); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
 
     /* Nav */
-    .nav { background: #1a1d2e; border-bottom: 1px solid #2d3148; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; height: 52px; }
-    .nav-title { color: #a78bfa; font-weight: 700; font-size: 16px; letter-spacing: 0.5px; }
+    .nav { background: var(--nav-bg); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; justify-content: space-between; height: 52px; }
+    .nav-title { color: var(--accent); font-weight: 700; font-size: 16px; letter-spacing: 0.5px; }
     .nav-controls { display: flex; align-items: center; gap: 12px; }
-    .project-select { background: #252840; border: 1px solid #3d4166; color: #e2e8f0; padding: 5px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
-    .project-select:focus { outline: none; border-color: #a78bfa; }
+    .project-select { background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+    .project-select:focus { outline: none; border-color: var(--accent); }
 
     /* Tabs */
-    .tabs { display: flex; gap: 0; background: #1a1d2e; border-bottom: 1px solid #2d3148; padding: 0 24px; }
-    .tab { padding: 12px 20px; font-size: 13px; color: #64748b; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
-    .tab:hover { color: #94a3b8; }
-    .tab.active { color: #a78bfa; border-bottom-color: #a78bfa; }
+    .tabs { display: flex; gap: 0; background: var(--nav-bg); border-bottom: 1px solid var(--border); padding: 0 24px; }
+    .tab { padding: 12px 20px; font-size: 13px; color: var(--text-tertiary); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+    .tab:hover { color: var(--text-secondary); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
     /* Main content */
     .content { padding: 24px; max-width: 1100px; margin: 0 auto; }
@@ -59,10 +59,10 @@
 
     /* KPI cards */
     .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
-    .kpi-card { background: #1e2130; border-radius: 8px; padding: 16px; }
+    .kpi-card { background: var(--surface); border-radius: 8px; padding: 16px; }
     .kpi-label { font-size: 11px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 8px; }
-    .kpi-value { font-size: 24px; font-weight: 700; color: #fff; }
-    .kpi-card.purple .kpi-label { color: #a78bfa; }
+    .kpi-value { font-size: 24px; font-weight: 700; color: var(--text-primary); }
+    .kpi-card.purple .kpi-label { color: var(--accent); }
     .kpi-card.green .kpi-label { color: #34d399; }
     .kpi-card.amber .kpi-label { color: #f59e0b; }
     .kpi-card.blue .kpi-label { color: #60a5fa; }
@@ -72,21 +72,21 @@
     .kpi-card.red .kpi-label { color: #f87171; }
 
     /* Charts */
-    .chart-card { background: #1e2130; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
-    .chart-title { font-size: 12px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: #64748b; margin-bottom: 16px; }
+    .chart-card { background: var(--surface); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+    .chart-title { font-size: 12px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 16px; }
     .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
 
     /* Time range toggle */
     .range-toggle { display: flex; gap: 4px; margin-bottom: 16px; }
-    .range-btn { background: #252840; border: 1px solid #3d4166; color: #64748b; padding: 4px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; }
-    .range-btn.active { background: #a78bfa22; border-color: #a78bfa; color: #a78bfa; }
+    .range-btn { background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-tertiary); padding: 4px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+    .range-btn.active { background: #a78bfa22; border-color: var(--accent); color: var(--accent); }
     /* Hourly drilldown */
-    .drilldown-hint { color: #475569; font-size: 10px; font-style: italic; margin-left: 8px; }
+    .drilldown-hint { color: var(--text-tertiary); font-size: 10px; font-style: italic; margin-left: 8px; }
     #dailyTokenChart { cursor: pointer; }
 
     /* Heatmap */
     #heatmapCanvas { display: block; }
-    .heatmap-legend { display: flex; align-items: center; gap: 4px; margin-top: 10px; font-size: 11px; color: #64748b; }
+    .heatmap-legend { display: flex; align-items: center; gap: 4px; margin-top: 10px; font-size: 11px; color: var(--text-tertiary); }
     .heatmap-legend span.sq { display: inline-block; width: 13px; height: 13px; border-radius: 2px; }
 
     /* Responsive */
@@ -118,7 +118,7 @@
       <div class="chart-card">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
           <div class="chart-title" style="margin:0">Activity Heatmap</div>
-          <div id="heatmap-tooltip" style="color:#94a3b8;font-size:12px"></div>
+          <div id="heatmap-tooltip" style="color:var(--text-secondary);font-size:12px"></div>
         </div>
         <div style="overflow-x:auto">
           <canvas id="heatmapCanvas"></canvas>
@@ -172,7 +172,7 @@
       <div id="hourly-view" style="display:none">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
           <button class="range-btn active" onclick="showDailyChart()">← Back</button>
-          <span style="color:#94a3b8;font-size:13px">24H 明細：<span id="hourly-date" style="color:#a78bfa;font-weight:600"></span></span>
+          <span style="color:var(--text-secondary);font-size:13px">24H 明細：<span id="hourly-date" style="color:var(--accent);font-weight:600"></span></span>
         </div>
         <div class="chart-card">
           <div class="chart-title">Hourly Token Usage</div>
