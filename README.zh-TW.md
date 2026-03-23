@@ -6,7 +6,7 @@
 
 直接讀取 `~/.claude/projects/` 的本地資料，除了 Docker（或 Python）之外不需要任何額外設定。
 
-![dark dashboard with token charts](https://img.shields.io/badge/theme-dark-1e2130?style=flat-square)
+![dark and light theme](https://img.shields.io/badge/theme-dark%20%7C%20light-1e2130?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.12+-blue?style=flat-square)
 ![flask](https://img.shields.io/badge/flask-latest-green?style=flat-square)
 
@@ -20,6 +20,7 @@
 - **專案** — 所有專案依 Token 用量排行，支援 1D／7D／30D／ALL 時間範圍篩選
 - **專案篩選** — 導覽列下拉選單，可將所有圖表限縮至單一專案
 - **自動時區** — 所有時間戳記自動轉換為瀏覽器的本地時區，全球任何時區皆可正確顯示，無需額外設定
+- **深色／淺色模式** — 點擊導覽列的 ☀️/🌙 按鈕切換佈景主題，偏好設定儲存於 `localStorage`，預設跟隨系統設定
 
 ## 快速開始（Docker）
 

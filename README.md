@@ -6,7 +6,7 @@ A local web dashboard to visualize your [Claude Code](https://claude.ai/code) us
 
 Reads data directly from `~/.claude/projects/` with no setup required beyond Docker (or Python).
 
-![dark dashboard with token charts](https://img.shields.io/badge/theme-dark-1e2130?style=flat-square)
+![dark and light theme](https://img.shields.io/badge/theme-dark%20%7C%20light-1e2130?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.12+-blue?style=flat-square)
 ![flask](https://img.shields.io/badge/flask-latest-green?style=flat-square)
 
@@ -20,6 +20,7 @@ Reads data directly from `~/.claude/projects/` with no setup required beyond Doc
 - **Projects** — All projects ranked by token usage, with 1D/7D/30D/ALL time range filter
 - **Project filter** — Nav dropdown to scope all charts to a single project
 - **Automatic timezone** — All timestamps are converted to your browser's local timezone; works correctly for any timezone worldwide with no configuration needed
+- **Dark / Light mode** — Toggle between dark and light themes via the ☀️/🌙 button in the nav bar; preference is saved in `localStorage` and defaults to your system setting
 
 ## Quick Start (Docker)
 
