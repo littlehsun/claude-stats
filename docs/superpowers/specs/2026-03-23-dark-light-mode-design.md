@@ -84,7 +84,7 @@ const CHART_COLORS = {
   dark: {
     output: '#a78bfa',
     input: '#6366f1',
-    cacheRead: '#1e3a5f',
+    cacheRead: '#1e6a9f',
     cacheCreate: '#2d4a6e',
     cacheProjects: '#3d3166',
     legendColor: '#94a3b8',
