@@ -41,9 +41,10 @@
     .project-select:focus { outline: none; border-color: var(--accent); }
     #theme-toggle { background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 5px 9px; border-radius: 6px; font-size: 14px; cursor: pointer; line-height: 1; }
     #theme-toggle:hover { border-color: var(--accent); }
-    #reload-btn { background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 5px 9px; border-radius: 6px; font-size: 16px; cursor: pointer; line-height: 1; transition: transform 0.4s ease; }
+    #reload-btn { background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 5px 9px; border-radius: 6px; font-size: 16px; cursor: pointer; line-height: 1; }
     #reload-btn:hover { border-color: var(--accent); }
-    #reload-btn.spinning { animation: spin 0.6s linear infinite; }
+    #reload-btn.spinning #reload-icon { animation: spin 0.6s linear infinite; }
+    #reload-icon { display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
     #menu-btn { display: none; background: none; border: none; color: var(--text-primary); font-size: 22px; cursor: pointer; padding: 4px 6px; line-height: 1; }
     @media (max-width: 640px) {
@@ -112,7 +113,7 @@
       <select class="project-select" id="projectSelect" onchange="onProjectChange()">
         <option value="all">All Projects</option>
       </select>
-      <button id="reload-btn" onclick="reloadStats()" title="Refresh data">↻</button>
+      <button id="reload-btn" onclick="reloadStats()" title="Refresh data"><span id="reload-icon">↻</span></button>
       <button id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">☀️</button>
     </div>
   </nav>
