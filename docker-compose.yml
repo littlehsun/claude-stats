@@ -1,0 +1,10 @@
+services:
+  claude-stats:
+    build:
+      context: .
+      network: host
+    network_mode: host
+    environment:
+      - PORT=${PORT:-5050}
+    volumes:
+      - "${HOME}/.claude/projects:/root/.claude/projects:ro"
