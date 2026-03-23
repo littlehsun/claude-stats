@@ -45,6 +45,8 @@
     .nav-controls { display: flex; align-items: center; gap: 12px; }
     .project-select { background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
     .project-select:focus { outline: none; border-color: var(--accent); }
+    #theme-toggle { background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 5px 9px; border-radius: 6px; font-size: 14px; cursor: pointer; line-height: 1; }
+    #theme-toggle:hover { border-color: var(--accent); }
 
     /* Tabs */
     .tabs { display: flex; gap: 0; background: var(--nav-bg); border-bottom: 1px solid var(--border); padding: 0 24px; }
@@ -103,6 +105,7 @@
       <select class="project-select" id="projectSelect" onchange="onProjectChange()">
         <option value="all">All Projects</option>
       </select>
+      <button id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">☀️</button>
     </div>
   </nav>
 
