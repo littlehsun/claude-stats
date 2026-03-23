@@ -2,7 +2,7 @@
 
 A local web dashboard to visualize your [Claude Code](https://claude.ai/code) usage — token consumption, model distribution, and per-project breakdown.
 
-Reads data directly from `~/.claude/projects/` with no setup required beyond installing Flask.
+Reads data directly from `~/.claude/projects/` with no setup required beyond Docker (or Python).
 
 ![dark dashboard with token charts](https://img.shields.io/badge/theme-dark-1e2130?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.8+-blue?style=flat-square)
@@ -15,12 +15,33 @@ Reads data directly from `~/.claude/projects/` with no setup required beyond ins
 - **Projects** — All projects ranked by token usage, with 1D/7D/30D/ALL time range filter
 - **Project filter** — Nav dropdown to filter all charts by a single project
 
-## Requirements
+## Quick Start (Docker)
 
-- Python 3.8+
-- Claude Code with usage data in `~/.claude/projects/`
+```bash
+git clone https://github.com/littlehsun/claude-stats
+cd claude-stats
+./run.sh
+```
 
-## Setup
+The interactive menu lets you:
+
+```
+╔══════════════════════════════════╗
+║        Claude Stats Runner       ║
+╚══════════════════════════════════╝
+
+  1) Start (default port 5050)
+  2) Start on custom port
+  3) Stop
+  4) Rebuild & Start
+  5) Exit
+```
+
+Press **Enter** to start on the default port 5050, then open **http://localhost:5050**.
+
+> **Requirements:** [Docker](https://docs.docker.com/get-docker/) with the daemon running.
+
+## Manual Setup (Python)
 
 ```bash
 git clone https://github.com/littlehsun/claude-stats
@@ -29,20 +50,8 @@ cd claude-stats
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-```
-
-## Usage
-
-```bash
 ./start.sh
 ```
-
-Then open **http://localhost:5050** in your browser.
-
-The `start.sh` script will:
-1. Kill any existing instance on port 5050
-2. Activate the virtual environment
-3. Start the Flask server
 
 ## Data Source
 
