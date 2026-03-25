@@ -134,6 +134,14 @@ def load_usage_records(tz=None):
       'cache_create': int,
     }
     """
+    def _parse_dt(ts, tz):
+        if ts and len(ts) >= 10:
+            try:
+                return datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone(tz)
+            except (ValueError, Exception):
+                pass
+        return None
+
     records = []
     if not PROJECTS_DIR.exists():
         return records
@@ -143,49 +151,70 @@ def load_usage_records(tz=None):
         project_name = project_dir_to_name(proj_dir.name)
         for jf in proj_dir.glob('*.jsonl'):
             try:
+                raw_lines = []
                 with open(jf, encoding='utf-8') as f:
                     for line in f:
                         line = line.strip()
                         if not line:
                             continue
                         try:
-                            d = json.loads(line)
+                            raw_lines.append(json.loads(line))
                         except json.JSONDecodeError:
                             continue
-                        if d.get('type') != 'assistant':
-                            continue
-                        msg = d.get('message', {})
-                        model = msg.get('model', '')
-                        if not model or model == '<synthetic>':
-                            continue
-                        usage = msg.get('usage', {})
-                        input_t = usage.get('input_tokens', 0) or 0
-                        output_t = usage.get('output_tokens', 0) or 0
-                        if input_t == 0 and output_t == 0:
-                            continue
-                        ts = d.get('timestamp', '')
-                        if ts and len(ts) >= 10:
-                            try:
-                                dt_utc = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                                dt_local = dt_utc.astimezone(tz)
-                                date = dt_local.strftime('%Y-%m-%d')
-                                hour = dt_local.strftime('%H')
-                            except (ValueError, Exception):
-                                date = ts[:10]
-                                hour = ts[11:13] if len(ts) >= 13 else 'unknown'
-                        else:
-                            date = 'unknown'
-                            hour = 'unknown'
-                        records.append({
-                            'project': project_name,
-                            'model': model,
-                            'date': date,
-                            'hour': hour,
-                            'input_tokens': input_t,
-                            'output_tokens': output_t,
-                            'cache_read': usage.get('cache_read_input_tokens', 0) or 0,
-                            'cache_create': usage.get('cache_creation_input_tokens', 0) or 0,
-                        })
+
+                # First pass: build uuid → dt_local for all messages
+                uuid_dt = {}
+                for d in raw_lines:
+                    uid = d.get('uuid')
+                    ts = d.get('timestamp', '')
+                    if uid and ts:
+                        dt = _parse_dt(ts, tz)
+                        if dt:
+                            uuid_dt[uid] = dt
+
+                # Second pass: collect assistant records with usage
+                for d in raw_lines:
+                    if d.get('type') != 'assistant':
+                        continue
+                    msg = d.get('message', {})
+                    model = msg.get('model', '')
+                    if not model or model == '<synthetic>':
+                        continue
+                    usage = msg.get('usage', {})
+                    input_t = usage.get('input_tokens', 0) or 0
+                    output_t = usage.get('output_tokens', 0) or 0
+                    if input_t == 0 and output_t == 0:
+                        continue
+
+                    ts = d.get('timestamp', '')
+                    dt_local = _parse_dt(ts, tz)
+                    if dt_local:
+                        date = dt_local.strftime('%Y-%m-%d')
+                        hour = dt_local.strftime('%H')
+                        minute = dt_local.strftime('%M')
+                    else:
+                        date = ts[:10] if ts else 'unknown'
+                        hour = ts[11:13] if len(ts) >= 13 else 'unknown'
+                        minute = ts[14:16] if len(ts) >= 16 else 'unknown'
+
+                    # Request start = parent user message timestamp
+                    parent_uuid = d.get('parentUuid')
+                    dt_start = uuid_dt.get(parent_uuid) if parent_uuid else None
+
+                    records.append({
+                        'project': project_name,
+                        'model': model,
+                        'date': date,
+                        'hour': hour,
+                        'minute': minute,
+                        'dt_local': dt_local,
+                        'dt_start': dt_start,
+                        'session_id': d.get('sessionId', ''),
+                        'input_tokens': input_t,
+                        'output_tokens': output_t,
+                        'cache_read': usage.get('cache_read_input_tokens', 0) or 0,
+                        'cache_create': usage.get('cache_creation_input_tokens', 0) or 0,
+                    })
             except Exception as e:
                 app.logger.warning(f"Skipping {jf}: {e}")
                 continue
@@ -234,6 +263,20 @@ def api_stats():
     today_output = sum(r['output_tokens'] for r in today_records)
     today_sessions = len({r['project'] for r in today_records})
 
+    # Weekly / monthly totals
+    week_cutoff = (date_cls.fromisoformat(today_str) - timedelta(days=7)).isoformat()
+    month_cutoff = (date_cls.fromisoformat(today_str) - timedelta(days=30)).isoformat()
+    week_tokens = sum(r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create'] for r in records if r['date'] != 'unknown' and r['date'] >= week_cutoff)
+    month_tokens = sum(r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create'] for r in records if r['date'] != 'unknown' and r['date'] >= month_cutoff)
+
+    # Daily average (active days only)
+    active_days = len({r['date'] for r in records if r['date'] != 'unknown'})
+    daily_avg = total_tokens // active_days if active_days > 0 else 0
+
+    # Cache hit rate (cache_read as % of all input-side tokens)
+    input_side = total_input + total_cache_read + total_cache_create
+    cache_hit_rate = round(total_cache_read / input_side * 100) if input_side > 0 else 0
+
     # Streak — use unfiltered records so range selection doesn't break it
     all_dates_activity = {r['date'] for r in records if r['date'] != 'unknown'}
     streak = 0
@@ -246,6 +289,39 @@ def api_stats():
         while check in all_dates_activity:
             streak += 1
             check = (date_cls.fromisoformat(check) - timedelta(days=1)).isoformat()
+
+    # Session durations (group by session_id, use first-message date for attribution)
+    def _fmt_dur(td):
+        mins = int(td.total_seconds() / 60)
+        h, m = divmod(mins, 60)
+        return f"{h}h {m:02d}m" if h else f"{m}m"
+
+    # Active time = union of [dt_start, dt_local] request intervals across all records
+    # dt_start = parent user message timestamp, dt_local = assistant response timestamp
+    # Union avoids double-counting parallel agents
+    raw_intervals = []
+    for r in all_records:
+        if r['dt_start'] and r['dt_local'] and r['dt_local'] > r['dt_start']:
+            raw_intervals.append((r['dt_start'], r['dt_local']))
+
+    # Sort and merge overlapping intervals, attribute to date of interval start
+    date_active = defaultdict(timedelta)
+    if raw_intervals:
+        raw_intervals.sort()
+        cur_start, cur_end = raw_intervals[0]
+        for s, e in raw_intervals[1:]:
+            if s <= cur_end:
+                cur_end = max(cur_end, e)
+            else:
+                date_active[cur_start.strftime('%Y-%m-%d')] += cur_end - cur_start
+                cur_start, cur_end = s, e
+        date_active[cur_start.strftime('%Y-%m-%d')] += cur_end - cur_start
+
+    today_dur = date_active.get(today_str, timedelta())
+    week_dur = sum(
+        (dur for d, dur in date_active.items() if d >= week_cutoff),
+        timedelta()
+    )
 
     # Daily breakdown — optionally filtered by date range
     daily_range_days = int(request.args.get('daily_range', '0') or '0')
@@ -311,6 +387,9 @@ def api_stats():
         key=lambda x: -x['total']
     )
 
+    # Top model and project (now that model_totals and projects_ranked are computed)
+    top_model = max(model_totals, key=model_totals.get) if model_totals else ''
+
     # Heatmap — all projects, all time (ignore project/date filters)
     heatmap_totals = defaultdict(int)
     for r in all_records:
@@ -326,7 +405,15 @@ def api_stats():
             'today_tokens': today_tokens,
             'today_output': today_output,
             'today_sessions': today_sessions,
+            'today_duration': _fmt_dur(today_dur),
+            'week_duration': _fmt_dur(week_dur),
             'streak': streak,
+            'week_tokens': week_tokens,
+            'month_tokens': month_tokens,
+            'daily_avg': daily_avg,
+            'cache_hit_rate': cache_hit_rate,
+            'top_model': top_model,
+            'top_project': projects_ranked[0]['project'] if projects_ranked else '',
         },
         'daily': daily_data,
         'daily_by_model': daily_by_model,
@@ -358,7 +445,30 @@ def api_hourly():
         hourly[h]['cache_read'] += r['cache_read']
         hourly[h]['cache_create'] += r['cache_create']
 
+    # 15-minute slots (96 total)
+    quarter = defaultdict(lambda: defaultdict(int))
+    for r in records:
+        if r['hour'] == 'unknown' or r['minute'] == 'unknown':
+            continue
+        slot = int(r['hour']) * 4 + int(r['minute']) // 15
+        quarter[slot]['input'] += r['input_tokens']
+        quarter[slot]['output'] += r['output_tokens']
+
+    slots = list(range(96))
+    slot_labels = [f"{s//4:02d}:{(s%4)*15:02d}" for s in slots]
+
     hours = [f'{i:02d}' for i in range(24)]
+    day_tokens = sum(r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create'] for r in records)
+    day_output = sum(r['output_tokens'] for r in records)
+    day_input = sum(r['input_tokens'] + r['cache_read'] + r['cache_create'] for r in records)
+    day_sessions = len({r['project'] for r in records})
+    model_tok = defaultdict(int)
+    proj_tok = defaultdict(int)
+    for r in records:
+        model_tok[r['model']] += r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create']
+        proj_tok[r['project']] += r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create']
+    day_top_model = max(model_tok, key=model_tok.get) if model_tok else ''
+    day_top_project = max(proj_tok, key=proj_tok.get) if proj_tok else ''
     return {
         'date': date_str,
         'hours': hours,
@@ -366,6 +476,15 @@ def api_hourly():
         'output': [hourly[h]['output'] for h in hours],
         'cache_read': [hourly[h]['cache_read'] for h in hours],
         'cache_create': [hourly[h]['cache_create'] for h in hours],
+        'slot_labels': slot_labels,
+        'slot_output': [quarter[s]['output'] for s in slots],
+        'slot_input': [quarter[s]['input'] for s in slots],
+        'day_tokens': day_tokens,
+        'day_output': day_output,
+        'day_input': day_input,
+        'day_sessions': day_sessions,
+        'day_top_model': day_top_model,
+        'day_top_project': day_top_project,
     }
 
 if __name__ == '__main__':

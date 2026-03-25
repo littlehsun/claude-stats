@@ -142,10 +142,18 @@
         <div class="kpi-card teal"><div class="kpi-label">Today's Output</div><div class="kpi-value" id="kpi-today-output">—</div></div>
         <div class="kpi-card pink"><div class="kpi-label">Today's Sessions</div><div class="kpi-value" id="kpi-today-sessions">—</div></div>
         <div class="kpi-card red"><div class="kpi-label">Streak</div><div class="kpi-value" id="kpi-streak">—</div></div>
+        <div class="kpi-card orange"><div class="kpi-label">Today's Active Time</div><div class="kpi-value" id="kpi-today-duration">—</div></div>
+        <div class="kpi-card teal"><div class="kpi-label">This Week Active Time</div><div class="kpi-value" id="kpi-week-duration">—</div></div>
         <div class="kpi-card purple"><div class="kpi-label">Total Tokens</div><div class="kpi-value" id="kpi-total">—</div></div>
         <div class="kpi-card green"><div class="kpi-label">Output Tokens</div><div class="kpi-value" id="kpi-output">—</div></div>
         <div class="kpi-card amber"><div class="kpi-label">Sessions</div><div class="kpi-value" id="kpi-sessions">—</div></div>
         <div class="kpi-card blue"><div class="kpi-label">Models Used</div><div class="kpi-value" id="kpi-models">—</div></div>
+        <div class="kpi-card blue"><div class="kpi-label">This Week</div><div class="kpi-value" id="kpi-week">—</div></div>
+        <div class="kpi-card purple"><div class="kpi-label">This Month</div><div class="kpi-value" id="kpi-month">—</div></div>
+        <div class="kpi-card teal"><div class="kpi-label">Daily Avg</div><div class="kpi-value" id="kpi-daily-avg">—</div></div>
+        <div class="kpi-card green"><div class="kpi-label">Cache Hit Rate</div><div class="kpi-value" id="kpi-cache-rate">—</div></div>
+        <div class="kpi-card amber"><div class="kpi-label">Top Model</div><div class="kpi-value" id="kpi-top-model" style="font-size:14px">—</div></div>
+        <div class="kpi-card pink"><div class="kpi-label">Top Project</div><div class="kpi-value" id="kpi-top-project" style="font-size:14px">—</div></div>
       </div>
       <div class="chart-row">
         <div class="chart-card">
@@ -185,6 +193,14 @@
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
           <button class="range-btn active" onclick="showDailyChart()">← Back</button>
           <span style="color:var(--text-secondary);font-size:13px">24H 明細：<span id="hourly-date" style="color:var(--accent);font-weight:600"></span></span>
+        </div>
+        <div class="kpi-grid" style="margin-bottom:16px">
+          <div class="kpi-card orange"><div class="kpi-label">Total Tokens</div><div class="kpi-value" id="hourly-kpi-total">—</div></div>
+          <div class="kpi-card teal"><div class="kpi-label">Output Tokens</div><div class="kpi-value" id="hourly-kpi-output">—</div></div>
+          <div class="kpi-card blue"><div class="kpi-label">Input Tokens</div><div class="kpi-value" id="hourly-kpi-input">—</div></div>
+          <div class="kpi-card pink"><div class="kpi-label">Sessions</div><div class="kpi-value" id="hourly-kpi-sessions">—</div></div>
+          <div class="kpi-card amber"><div class="kpi-label">Top Model</div><div class="kpi-value" id="hourly-kpi-model" style="font-size:14px">—</div></div>
+          <div class="kpi-card green"><div class="kpi-label">Top Project</div><div class="kpi-value" id="hourly-kpi-project" style="font-size:14px">—</div></div>
         </div>
         <div class="chart-card">
           <div class="chart-title">Hourly Token Usage</div>
@@ -231,7 +247,7 @@
         gridColor: '#2d3148',
         modelPie: ['#a78bfa', '#6366f1', '#34d399', '#f59e0b', '#60a5fa'],
         modelDaily: ['#a78bfa','#34d399','#f59e0b','#60a5fa','#f472b6','#fb923c','#2dd4bf','#818cf8'],
-        heatmap: ['#1e2130', '#2d2550', '#4a3a8a', '#7c5cbf', '#a78bfa'],
+        heatmap: ['#2a3050', '#2d2550', '#4a3a8a', '#7c5cbf', '#a78bfa'],
         heatmapLabel: '#64748b',
       },
       light: {
@@ -339,24 +355,36 @@
         document.getElementById('daily-view').style.display = 'none';
         document.getElementById('hourly-view').style.display = 'block';
         document.getElementById('hourly-date').textContent = date;
+        document.getElementById('hourly-kpi-total').textContent = fmtNum(data.day_tokens);
+        document.getElementById('hourly-kpi-output').textContent = fmtNum(data.day_output);
+        document.getElementById('hourly-kpi-input').textContent = fmtNum(data.day_input);
+        document.getElementById('hourly-kpi-sessions').textContent = data.day_sessions;
+        document.getElementById('hourly-kpi-model').textContent = data.day_top_model ? fmtModel(data.day_top_model) : '—';
+        document.getElementById('hourly-kpi-project').textContent = data.day_top_project || '—';
 
         destroyChart('hourly');
         const c = CHART_COLORS[currentTheme];
         charts['hourly'] = new Chart(document.getElementById('hourlyTokenChart'), {
-          type: 'line',
+          type: 'bar',
           data: {
-            labels: data.hours,
+            labels: data.slot_labels,
             datasets: [
-              { label: 'Output', data: data.output, borderColor: c.output, backgroundColor: c.output + '18', fill: true, tension: 0.3, pointRadius: 3 },
-              { label: 'Input', data: data.input, borderColor: c.input, backgroundColor: c.input + '18', fill: true, tension: 0.3, pointRadius: 3 },
-              { label: 'Cache Read', data: data.cache_read, borderColor: c.cacheRead, backgroundColor: 'transparent', tension: 0.3, pointRadius: 2 },
+              { label: 'Output', data: data.slot_output, backgroundColor: c.output, stack: 'a' },
+              { label: 'Input', data: data.slot_input, backgroundColor: c.input, stack: 'a' },
             ]
           },
           options: {
             plugins: { legend: { labels: { color: c.legendColor, boxWidth: 10 } } },
             scales: {
-              x: { ticks: { color: c.tickColor }, grid: { color: c.gridColor } },
-              y: { ticks: { color: c.tickColor, callback: v => fmtNum(v) }, grid: { color: c.gridColor } }
+              x: {
+                ticks: {
+                  color: c.tickColor,
+                  callback: (_, i) => i % 4 === 0 ? data.slot_labels[i].slice(0, 2) + ':00' : '',
+                  maxRotation: 0,
+                },
+                grid: { color: c.gridColor }
+              },
+              y: { stacked: true, ticks: { color: c.tickColor, callback: v => fmtNum(v) }, grid: { color: c.gridColor } }
             }
           }
         });
@@ -391,6 +419,14 @@
       document.getElementById('kpi-today-output').textContent = fmtNum(k.today_output);
       document.getElementById('kpi-today-sessions').textContent = k.today_sessions;
       document.getElementById('kpi-streak').textContent = k.streak ? `${k.streak}d` : '—';
+      document.getElementById('kpi-today-duration').textContent = k.today_duration || '0m';
+      document.getElementById('kpi-week-duration').textContent = k.week_duration || '0m';
+      document.getElementById('kpi-week').textContent = fmtNum(k.week_tokens);
+      document.getElementById('kpi-month').textContent = fmtNum(k.month_tokens);
+      document.getElementById('kpi-daily-avg').textContent = fmtNum(k.daily_avg);
+      document.getElementById('kpi-cache-rate').textContent = k.cache_hit_rate + '%';
+      document.getElementById('kpi-top-model').textContent = k.top_model ? fmtModel(k.top_model) : '—';
+      document.getElementById('kpi-top-project').textContent = k.top_project || '—';
     }
 
     function destroyChart(id) {
@@ -424,7 +460,7 @@
           labels: top.map(p => p.project),
           datasets: [
             { label: 'Output', data: top.map(p => p.output), backgroundColor: c.output },
-            { label: 'Cache', data: top.map(p => p.cache), backgroundColor: c.cacheProjects },
+            { label: 'Input', data: top.map(p => p.total - p.output - p.cache), backgroundColor: c.input },
           ]
         },
         options: {
@@ -441,6 +477,7 @@
     function renderDailyChart() {
       destroyChart('daily');
       const { dates, input, output, cache_read, cache_create } = statsData.daily;
+      const inputTotal = input.map((v, i) => v + (cache_read[i] || 0) + (cache_create[i] || 0));
       const c = CHART_COLORS[currentTheme];
       charts['daily'] = new Chart(document.getElementById('dailyTokenChart'), {
         type: 'bar',
@@ -448,9 +485,7 @@
           labels: dates,
           datasets: [
             { label: 'Output', data: output, backgroundColor: c.output, stack: 'a' },
-            { label: 'Input', data: input, backgroundColor: c.input, stack: 'a' },
-            { label: 'Cache Read', data: cache_read, backgroundColor: c.cacheRead, stack: 'a' },
-            { label: 'Cache Create', data: cache_create, backgroundColor: c.cacheCreate, stack: 'a' },
+            { label: 'Input', data: inputTotal, backgroundColor: c.input, stack: 'a' },
           ]
         },
         options: {
@@ -479,7 +514,7 @@
           labels: ranked.map(p => p.project),
           datasets: [
             { label: 'Output', data: ranked.map(p => p.output), backgroundColor: c.output, stack: 'a' },
-            { label: 'Cache', data: ranked.map(p => p.cache), backgroundColor: c.cacheProjects, stack: 'a' },
+            { label: 'Input', data: ranked.map(p => p.total - p.output - p.cache), backgroundColor: c.input, stack: 'a' },
           ]
         },
         options: {
@@ -617,6 +652,22 @@
         tip.textContent = '';
       };
       canvas.onmouseleave = () => { document.getElementById('heatmap-tooltip').textContent = ''; };
+      canvas.onclick = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+        const w = Math.floor((mx - PAD_LEFT) / STEP);
+        const d = Math.floor((my - PAD_TOP) / STEP);
+        if (w >= 0 && w < WEEKS && d >= 0 && d < 7) {
+          const date = new Date(start);
+          date.setDate(start.getDate() + w * 7 + d);
+          if (date <= today) {
+            const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+            switchTab('tokens');
+            showHourlyChart(dateStr);
+          }
+        }
+      };
     }
 
     function switchTab(name) {
