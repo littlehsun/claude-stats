@@ -533,9 +533,10 @@
       const maxVal = vals.length ? Math.max(...vals) : 1;
 
       const today = new Date();
+      // Always make today's week the last column
       const start = new Date(today);
-      start.setDate(start.getDate() - (WEEKS * 7 - 1));
-      start.setDate(start.getDate() - start.getDay()); // align to Sunday
+      start.setDate(start.getDate() - start.getDay()); // this week's Sunday
+      start.setDate(start.getDate() - (WEEKS - 1) * 7); // go back WEEKS-1 weeks
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const monthLabels = {};
@@ -545,7 +546,7 @@
           const date = new Date(start);
           date.setDate(start.getDate() + w * 7 + d);
           if (date > today) continue;
-          const dateStr = date.toISOString().slice(0, 10);
+          const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
           const tokens = heatmapData[dateStr] || 0;
 
           if (d === 0) {
@@ -607,7 +608,7 @@
           const date = new Date(start);
           date.setDate(start.getDate() + w * 7 + d);
           if (date <= today) {
-            const dateStr = date.toISOString().slice(0, 10);
+            const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
             const tokens = heatmapData[dateStr] || 0;
             tip.textContent = `${dateStr}  ${tokens > 0 ? fmtNum(tokens) + ' tokens' : 'no activity'}`;
             return;
