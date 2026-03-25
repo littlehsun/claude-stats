@@ -2,7 +2,7 @@
 
 [繁體中文](./README.zh-TW.md)
 
-A local web dashboard to visualize your [Claude Code](https://claude.ai/code) usage — token consumption, model distribution, and per-project breakdown.
+A local web dashboard to visualize your [Claude Code](https://claude.ai/code) usage — token consumption, active time, model distribution, and per-project breakdown.
 
 Reads data directly from `~/.claude/projects/` with no setup required beyond Docker (or Python).
 
@@ -10,17 +10,36 @@ Reads data directly from `~/.claude/projects/` with no setup required beyond Doc
 ![python](https://img.shields.io/badge/python-3.12+-blue?style=flat-square)
 ![flask](https://img.shields.io/badge/flask-latest-green?style=flat-square)
 
+![Overview dark](docs/screenshot-overview-dark.png)
+
+![Overview light](docs/screenshot-overview-light.png)
+
 ## Features
 
-- **Activity Heatmap** — GitHub-style 52-week calendar at the top of Overview; purple intensity shows daily token volume; hover to see exact date and count
-- **Today's stats** — KPI cards for today's tokens, output, and active sessions updated on every load
-- **Streak** — Consecutive days with any Claude usage, so the streak counter stays accurate even if today hasn't started yet
-- **Overview** — 8 KPI cards (today + all-time), model distribution donut chart, top projects ranking
-- **Tokens** — Daily stacked bar (input / output / cache read / cache create) + Output by Model breakdown, 7d/30d/All filter, click any bar to drill into 24-hour hourly view
-- **Projects** — All projects ranked by token usage, with 1D/7D/30D/ALL time range filter
-- **Project filter** — Nav dropdown to scope all charts to a single project
-- **Automatic timezone** — All timestamps are converted to your browser's local timezone; works correctly for any timezone worldwide with no configuration needed
-- **Dark / Light mode** — Toggle between dark and light themes via the ☀️/🌙 button in the nav bar; preference is saved in `localStorage` and defaults to your system setting
+**Overview**
+- **Activity Heatmap** — GitHub-style 53-week calendar; click any cell to drill into that day's detail
+- **16 KPI cards** — today's tokens / output / sessions / active time, this week's active time, streak, totals, this week/month, daily avg, cache hit rate, top model, top project
+- **Model Distribution** — donut chart of token usage by model
+- **Top Projects** — horizontal bar chart with output vs input breakdown
+
+**Tokens Tab**
+- **Daily stacked bar chart** — input + output per day (cache merged into input), click any bar to drill into 15-minute granularity
+- **Output by Model** — daily stacked bar by model
+- **24H drilldown** — 15-minute resolution bar chart with per-day KPIs (total, output, input, sessions, top model, top project)
+- 7d / 30d / All time range filter
+
+**Projects Tab**
+- All projects ranked by token usage
+- 1D / 7D / 30D / ALL time range filter
+
+**General**
+- **Active time tracking** — measures actual Claude execution time by unioning request intervals across parallel agents (no double-counting)
+- **Project filter** — nav dropdown to scope all charts to a single project
+- **Automatic timezone** — all timestamps converted to your browser's local timezone
+- **Dark / Light mode** — toggle via ☀️/🌙 button, saved in `localStorage`
+- **Auto-refresh** — data refreshes every 5 minutes; manual refresh button in nav
+
+![Tokens dark](docs/screenshot-tokens-dark.png)
 
 ## Quick Start (Docker)
 
@@ -62,7 +81,7 @@ pip install -r requirements.txt
 
 ## Data Source
 
-All data is read locally from `~/.claude/projects/`. Each subdirectory is a project, each `.jsonl` file is a conversation. The app parses `assistant` messages and extracts token usage fields:
+All data is read locally from `~/.claude/projects/`. Each subdirectory is a project, each `.jsonl` file is a conversation. The app does a two-pass parse per file — first to build a `uuid → timestamp` map, then to extract token usage and compute per-request active time intervals.
 
 | Field | Source |
 |-------|--------|
@@ -70,6 +89,7 @@ All data is read locally from `~/.claude/projects/`. Each subdirectory is a proj
 | `output_tokens` | `message.usage.output_tokens` |
 | `cache_read` | `message.usage.cache_read_input_tokens` |
 | `cache_create` | `message.usage.cache_creation_input_tokens` |
+| request duration | `assistant.timestamp − parent_user.timestamp` |
 
 No data leaves your machine.
 
