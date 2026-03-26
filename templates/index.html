@@ -232,6 +232,9 @@
     let currentProject = 'all';
     let projRange = 0;  // 0 = all (Projects tab range)
     let charts = {};
+    let currentTab = 'overview';
+    let drilldownSourceTab = null;
+    let drilldownSourceScrollY = null;
 
     let currentTheme = 'dark';
 
@@ -347,13 +350,21 @@
     }
 
     async function showHourlyChart(date) {
+      document.getElementById('daily-view').style.display = 'none';
+      document.getElementById('hourly-view').style.display = 'block';
+      document.getElementById('hourly-date').textContent = date;
+      document.getElementById('hourly-kpi-total').textContent = '—';
+      document.getElementById('hourly-kpi-output').textContent = '—';
+      document.getElementById('hourly-kpi-input').textContent = '—';
+      document.getElementById('hourly-kpi-sessions').textContent = '—';
+      document.getElementById('hourly-kpi-model').textContent = '—';
+      document.getElementById('hourly-kpi-project').textContent = '—';
+      destroyChart('hourly');
       try {
         const res = await fetch(`/api/hourly?date=${date}&project=${encodeURIComponent(currentProject)}&tz=${encodeURIComponent(BROWSER_TZ)}`);
         if (!res.ok) throw new Error('Failed');
         const data = await res.json();
 
-        document.getElementById('daily-view').style.display = 'none';
-        document.getElementById('hourly-view').style.display = 'block';
         document.getElementById('hourly-date').textContent = date;
         document.getElementById('hourly-kpi-total').textContent = fmtNum(data.day_tokens);
         document.getElementById('hourly-kpi-output').textContent = fmtNum(data.day_output);
@@ -362,7 +373,6 @@
         document.getElementById('hourly-kpi-model').textContent = data.day_top_model ? fmtModel(data.day_top_model) : '—';
         document.getElementById('hourly-kpi-project').textContent = data.day_top_project || '—';
 
-        destroyChart('hourly');
         const c = CHART_COLORS[currentTheme];
         charts['hourly'] = new Chart(document.getElementById('hourlyTokenChart'), {
           type: 'bar',
@@ -393,10 +403,29 @@
       }
     }
 
+    function openHourlyDrilldown(date, sourceTab = currentTab) {
+      drilldownSourceTab = sourceTab;
+      drilldownSourceScrollY = window.scrollY;
+      switchTab('tokens');
+      showHourlyChart(date);
+    }
+
     function showDailyChart() {
       document.getElementById('daily-view').style.display = 'block';
       document.getElementById('hourly-view').style.display = 'none';
       destroyChart('hourly');
+      if (drilldownSourceTab && drilldownSourceTab !== 'tokens') {
+        switchTab(drilldownSourceTab);
+      }
+      if (drilldownSourceScrollY !== null) {
+        requestAnimationFrame(() => {
+          window.scrollTo({ top: drilldownSourceScrollY, behavior: 'auto' });
+          drilldownSourceScrollY = null;
+          drilldownSourceTab = null;
+        });
+      } else {
+        drilldownSourceTab = null;
+      }
     }
 
     function renderAll() {
@@ -492,7 +521,7 @@
           onClick: (evt, elements) => {
             if (elements.length > 0) {
               const idx = elements[0].index;
-              showHourlyChart(dates[idx]);
+              openHourlyDrilldown(dates[idx], 'tokens');
             }
           },
           plugins: { legend: { labels: { color: c.legendColor, boxWidth: 10 } } },
@@ -663,14 +692,14 @@
           date.setDate(start.getDate() + w * 7 + d);
           if (date <= today) {
             const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
-            switchTab('tokens');
-            showHourlyChart(dateStr);
+            openHourlyDrilldown(dateStr, 'overview');
           }
         }
       };
     }
 
     function switchTab(name) {
+      currentTab = name;
       document.querySelectorAll('.tab').forEach((t, i) => {
         t.classList.toggle('active', ['overview','tokens','projects'][i] === name);
       });
