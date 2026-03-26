@@ -21,11 +21,13 @@ Reads data directly from `~/.claude/projects/` with no setup required beyond Doc
 - **16 KPI cards** — today's tokens / output / sessions / active time, this week's active time, streak, totals, this week/month, daily avg, cache hit rate, top model, top project
 - **Model Distribution** — donut chart of token usage by model
 - **Top Projects** — horizontal bar chart with output vs input breakdown
+- **Home shortcut** — click `Claude Stats` in the top-left to return to the overview and exit drilldowns
 
 **Tokens Tab**
 - **Daily stacked bar chart** — input + output per day (cache merged into input), click any bar to drill into 15-minute granularity
 - **Output by Model** — daily stacked bar by model
-- **24H drilldown** — 15-minute resolution bar chart with per-day KPIs (total, output, input, sessions, top model, top project)
+- **24H drilldown** — 15-minute resolution bar chart with per-day KPIs (total, output, input, sessions, active time, models used, top model, top project)
+- **High-resolution export** — download the daily 24H drilldown as a print-ready PNG
 - 7d / 30d / All time range filter
 
 **Projects Tab**
@@ -37,6 +39,7 @@ Reads data directly from `~/.claude/projects/` with no setup required beyond Doc
 - **Project filter** — nav dropdown to scope all charts to a single project
 - **Automatic timezone** — all timestamps converted to your browser's local timezone
 - **Export / Import** — export or import Claude raw data with project and day-range filters, then aggregate multi-machine usage in one dashboard
+- **Import preview** — inspect the projects inside an import zip before choosing which project and day range to merge
 - **Dark / Light mode** — toggle via ☀️/🌙 button, saved in `localStorage`
 - **Auto-refresh** — data refreshes every 5 minutes; manual refresh button in nav
 
@@ -84,7 +87,7 @@ pip install -r requirements.txt
 
 All data is read locally from `~/.claude/projects/`. Each subdirectory is a project, each `.jsonl` file is a conversation. The app does a two-pass parse per file — first to build a `uuid → timestamp` map, then to extract token usage and compute per-request active time intervals.
 
-To aggregate usage from multiple computers, click `Export` on one machine and `Import` that zip on another. Imported data is merged into a single local store during import, and duplicate assistant events are discarded immediately by message identity so only one copy is retained on disk.
+To aggregate usage from multiple computers, click `Export` on one machine and `Import` that zip on another. Both export and import support filtering by project and recent day range. Import first previews the zip so you can choose a specific project to merge. Imported data is merged into a single local store during import, and duplicate assistant events are discarded immediately by message identity so only one copy is retained on disk.
 
 | Field | Source |
 |-------|--------|
