@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, send_file
 import json
 from pathlib import Path
 from collections import defaultdict
@@ -6,8 +6,14 @@ from datetime import date as date_cls, timedelta, datetime
 from functools import lru_cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
+import io
+import shutil
+import zipfile
 
 PROJECTS_DIR = Path.home() / '.claude' / 'projects'
+IMPORTS_DIR = Path.home() / '.claude-stats' / 'imports'
+IMPORTED_PROJECTS_DIR = IMPORTS_DIR / 'projects'
+IMPORT_MANIFEST_PATH = IMPORTS_DIR / 'manifest.json'
 
 # When running in Docker, $HOME is mounted at /host-home so we can do
 # filesystem-based path reconstruction against the real host home.
@@ -110,6 +116,43 @@ def project_dir_to_name(dir_name: str) -> str:
     name = Path(path.replace('~', str(_HOST_HOME), 1)).name
     return name or dir_name
 
+
+def _load_manifest(manifest_path: Path = IMPORT_MANIFEST_PATH) -> dict:
+    if not manifest_path.is_file():
+        return {}
+    try:
+        with open(manifest_path, encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def iter_project_sources():
+    if PROJECTS_DIR.exists():
+        for proj_dir in PROJECTS_DIR.iterdir():
+            if proj_dir.is_dir():
+                yield proj_dir, None
+
+    if IMPORTED_PROJECTS_DIR.exists():
+        manifest = _load_manifest()
+        path_map = manifest.get('path_map', {}) if isinstance(manifest.get('path_map', {}), dict) else {}
+        for proj_dir in IMPORTED_PROJECTS_DIR.iterdir():
+            if proj_dir.is_dir():
+                yield proj_dir, path_map
+
+
+def project_dir_to_path(dir_name: str, path_map=None) -> str:
+    if path_map and dir_name in path_map:
+        return path_map[dir_name]
+    return dir_name_to_path(dir_name)
+
+
+def project_dir_to_display_name(dir_name: str, path_map=None) -> str:
+    path = project_dir_to_path(dir_name, path_map)
+    name = Path(path.replace('~', str(_HOST_HOME), 1)).name
+    return name or dir_name
+
 def _parse_tz(tz_name: str):
     """Return a ZoneInfo object for tz_name, falling back to local timezone."""
     if tz_name:
@@ -118,6 +161,154 @@ def _parse_tz(tz_name: str):
         except (ZoneInfoNotFoundError, KeyError):
             pass
     return datetime.now().astimezone().tzinfo
+
+
+def _fmt_dur(td):
+    mins = int(td.total_seconds() / 60)
+    h, m = divmod(mins, 60)
+    return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+def _record_identity(d: dict) -> str:
+    return d.get('uuid') or '|'.join([
+        d.get('sessionId', ''),
+        d.get('parentUuid', ''),
+        d.get('timestamp', ''),
+        d.get('type', ''),
+    ])
+
+
+def _load_jsonl_objects(path: Path):
+    objects = []
+    try:
+        with open(path, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    objects.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        pass
+    return objects
+
+
+def _merge_jsonl_payload(dest_path: Path, payload_lines):
+    existing = _load_jsonl_objects(dest_path) if dest_path.exists() else []
+    seen_ids = {_record_identity(obj) for obj in existing}
+    merged = list(existing)
+    added = 0
+    skipped = 0
+
+    for raw_line in payload_lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            skipped += 1
+            continue
+        record_id = _record_identity(obj)
+        if record_id in seen_ids:
+            skipped += 1
+            continue
+        seen_ids.add(record_id)
+        merged.append(obj)
+        added += 1
+
+    if added > 0 or not dest_path.exists():
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest_path, 'w', encoding='utf-8') as f:
+            for obj in merged:
+                f.write(json.dumps(obj, ensure_ascii=False) + '\n')
+
+    return added, skipped
+
+
+def _save_import_manifest(manifest: dict):
+    IMPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(IMPORT_MANIFEST_PATH, 'w', encoding='utf-8') as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+
+def _parse_days_arg(raw_value) -> int:
+    try:
+        days = int(raw_value or '0')
+    except (TypeError, ValueError):
+        return 0
+    return max(days, 0)
+
+
+def _build_cutoff_date(days: int, tz) -> str | None:
+    if days <= 0:
+        return None
+    today_str = datetime.now(tz).strftime('%Y-%m-%d')
+    return (date_cls.fromisoformat(today_str) - timedelta(days=days)).isoformat()
+
+
+def _parse_dt(ts, tz):
+    if ts and len(ts) >= 10:
+        try:
+            return datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone(tz)
+        except (ValueError, Exception):
+            pass
+    return None
+
+
+def _object_date_str(obj: dict, tz) -> str:
+    ts = obj.get('timestamp', '')
+    dt_local = _parse_dt(ts, tz)
+    if dt_local:
+        return dt_local.strftime('%Y-%m-%d')
+    return ts[:10] if ts else 'unknown'
+
+
+def _filter_file_objects(raw_objects: list[dict], cutoff_date: str | None, tz):
+    if cutoff_date is None:
+        return raw_objects
+
+    include_ids = set()
+    include_indexes = set()
+    for idx, obj in enumerate(raw_objects):
+        if obj.get('type') != 'assistant':
+            continue
+        obj_date = _object_date_str(obj, tz)
+        if obj_date == 'unknown' or obj_date < cutoff_date:
+            continue
+        include_indexes.add(idx)
+        parent_uuid = obj.get('parentUuid')
+        if parent_uuid:
+            include_ids.add(parent_uuid)
+
+    filtered = []
+    for idx, obj in enumerate(raw_objects):
+        if idx in include_indexes or obj.get('uuid') in include_ids:
+            filtered.append(obj)
+    return filtered
+
+
+def _project_entries_from_zip(zf: zipfile.ZipFile, manifest: dict):
+    path_map = manifest.get('path_map', {}) if isinstance(manifest.get('path_map', {}), dict) else {}
+    seen = {}
+    for name in zf.namelist():
+        if not (name.startswith('projects/') and name.endswith('.jsonl')):
+            continue
+        rel_path = Path(name)
+        if len(rel_path.parts) < 3:
+            continue
+        dir_name = rel_path.parts[1]
+        if dir_name in seen:
+            continue
+        path = path_map.get(dir_name, '/' + dir_name.lstrip('-'))
+        seen[dir_name] = {
+            'key': dir_name,
+            'name': Path(path.replace('~', str(_HOST_HOME), 1)).name or dir_name,
+            'path': path,
+        }
+    return sorted(seen.values(), key=lambda item: item['name'].lower())
 
 
 def load_usage_records(tz=None):
@@ -134,21 +325,12 @@ def load_usage_records(tz=None):
       'cache_create': int,
     }
     """
-    def _parse_dt(ts, tz):
-        if ts and len(ts) >= 10:
-            try:
-                return datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone(tz)
-            except (ValueError, Exception):
-                pass
-        return None
-
     records = []
-    if not PROJECTS_DIR.exists():
+    if not PROJECTS_DIR.exists() and not IMPORTED_PROJECTS_DIR.exists():
         return records
-    for proj_dir in PROJECTS_DIR.iterdir():
-        if not proj_dir.is_dir():
-            continue
-        project_name = project_dir_to_name(proj_dir.name)
+    seen_record_ids = set()
+    for proj_dir, path_map in iter_project_sources():
+        project_name = project_dir_to_display_name(proj_dir.name, path_map)
         for jf in proj_dir.glob('*.jsonl'):
             try:
                 raw_lines = []
@@ -176,6 +358,14 @@ def load_usage_records(tz=None):
                 for d in raw_lines:
                     if d.get('type') != 'assistant':
                         continue
+                    record_id = d.get('uuid') or '|'.join([
+                        d.get('sessionId', ''),
+                        d.get('parentUuid', ''),
+                        d.get('timestamp', ''),
+                    ])
+                    if record_id in seen_record_ids:
+                        continue
+                    seen_record_ids.add(record_id)
                     msg = d.get('message', {})
                     model = msg.get('model', '')
                     if not model or model == '<synthetic>':
@@ -228,15 +418,190 @@ def index():
 def api_projects():
     projects = []
     seen = set()
-    if PROJECTS_DIR.exists():
-        for proj_dir in sorted(PROJECTS_DIR.iterdir()):
-            if not proj_dir.is_dir():
-                continue
-            name = project_dir_to_name(proj_dir.name)
-            if name not in seen:
-                seen.add(name)
-                projects.append({'name': name, 'path': dir_name_to_path(proj_dir.name)})
+    for proj_dir, path_map in sorted(iter_project_sources(), key=lambda item: item[0].name):
+        name = project_dir_to_display_name(proj_dir.name, path_map)
+        if name not in seen:
+            seen.add(name)
+            projects.append({'name': name, 'path': project_dir_to_path(proj_dir.name, path_map)})
     return {'projects': projects}
+
+
+@app.route('/api/export')
+def api_export():
+    project_filter = request.args.get('project', 'all')
+    tz = _parse_tz(request.args.get('tz', ''))
+    days = _parse_days_arg(request.args.get('days', '0'))
+    cutoff_date = _build_cutoff_date(days, tz)
+    buf = io.BytesIO()
+    created_at = datetime.now().astimezone().isoformat()
+    with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+        path_map = {}
+        exported_projects = set()
+        if PROJECTS_DIR.exists():
+            for proj_dir in sorted(PROJECTS_DIR.iterdir()):
+                if not proj_dir.is_dir():
+                    continue
+                project_path = dir_name_to_path(proj_dir.name)
+                project_name = Path(project_path.replace('~', str(_HOST_HOME), 1)).name or proj_dir.name
+                if project_filter != 'all' and project_filter != project_name:
+                    continue
+                for jf in sorted(proj_dir.glob('*.jsonl')):
+                    raw_objects = _load_jsonl_objects(jf)
+                    filtered_objects = _filter_file_objects(raw_objects, cutoff_date, tz)
+                    if not filtered_objects:
+                        continue
+                    path_map[proj_dir.name] = project_path
+                    exported_projects.add(proj_dir.name)
+                    payload = ''.join(json.dumps(obj, ensure_ascii=False) + '\n' for obj in filtered_objects)
+                    zf.writestr(f'projects/{proj_dir.name}/{jf.name}', payload)
+        manifest = {
+            'format_version': 1,
+            'created_at': created_at,
+            'source': 'claude-stats',
+            'path_map': path_map,
+            'filters': {
+                'project': project_filter,
+                'days': days,
+            },
+        }
+        zf.writestr('manifest.json', json.dumps(manifest, ensure_ascii=False, indent=2))
+    buf.seek(0)
+    stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    return send_file(
+        buf,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=f'claude-stats-export-{stamp}.zip',
+    )
+
+
+def _safe_zip_members(zf: zipfile.ZipFile):
+    for member in zf.infolist():
+        path = Path(member.filename)
+        if path.is_absolute():
+            return False
+        if '..' in path.parts:
+            return False
+    return True
+
+
+@app.route('/api/import/preview', methods=['POST'])
+def api_import_preview():
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return {'error': 'file required'}, 400
+
+    try:
+        payload = upload.read()
+        with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+            if not _safe_zip_members(zf):
+                return {'error': 'invalid zip contents'}, 400
+            manifest = {'path_map': {}}
+            if 'manifest.json' in zf.namelist():
+                with zf.open('manifest.json') as mf:
+                    manifest = json.load(mf)
+            projects = _project_entries_from_zip(zf, manifest)
+            if not projects:
+                return {'error': 'zip does not contain exported project data'}, 400
+            return {'projects': projects}
+    except zipfile.BadZipFile:
+        return {'error': 'invalid zip file'}, 400
+    except json.JSONDecodeError:
+        return {'error': 'invalid manifest.json'}, 400
+
+
+@app.route('/api/import', methods=['POST'])
+def api_import():
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return {'error': 'file required'}, 400
+
+    project_filter = request.form.get('project', 'all')
+    tz = _parse_tz(request.form.get('tz', ''))
+    days = _parse_days_arg(request.form.get('days', '0'))
+    cutoff_date = _build_cutoff_date(days, tz)
+
+    try:
+        payload = upload.read()
+        with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+            if not _safe_zip_members(zf):
+                return {'error': 'invalid zip contents'}, 400
+            incoming_manifest = {'path_map': {}}
+            if 'manifest.json' in zf.namelist():
+                with zf.open('manifest.json') as mf:
+                    incoming_manifest = json.load(mf)
+            if not any(name.startswith('projects/') and name.endswith('.jsonl') for name in zf.namelist()):
+                return {'error': 'zip does not contain exported project data'}, 400
+
+            IMPORTED_PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+            merged_manifest = _load_manifest()
+            merged_path_map = merged_manifest.get('path_map', {}) if isinstance(merged_manifest.get('path_map', {}), dict) else {}
+            incoming_path_map = incoming_manifest.get('path_map', {}) if isinstance(incoming_manifest.get('path_map', {}), dict) else {}
+
+            imported_files = 0
+            added_records = 0
+            skipped_records = 0
+            imported_projects = set()
+
+            for name in sorted(zf.namelist()):
+                if not (name.startswith('projects/') and name.endswith('.jsonl')):
+                    continue
+                rel_path = Path(name)
+                if len(rel_path.parts) < 3:
+                    continue
+                project_dir_name = rel_path.parts[1]
+                project_path = incoming_path_map.get(project_dir_name, '/' + project_dir_name.lstrip('-'))
+                project_name = Path(project_path.replace('~', str(_HOST_HOME), 1)).name or project_dir_name
+                if project_filter != 'all' and project_filter != project_name and project_filter != project_dir_name:
+                    continue
+                dest_path = IMPORTS_DIR.joinpath(*rel_path.parts)
+                with zf.open(name) as src:
+                    raw_objects = []
+                    for line in src:
+                        line = line.decode('utf-8', errors='ignore').strip()
+                        if not line:
+                            continue
+                        try:
+                            raw_objects.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            skipped_records += 1
+                filtered_objects = _filter_file_objects(raw_objects, cutoff_date, tz)
+                if not filtered_objects:
+                    continue
+                payload_lines = [json.dumps(obj, ensure_ascii=False) for obj in filtered_objects]
+                added, skipped = _merge_jsonl_payload(dest_path, payload_lines)
+                imported_files += 1
+                added_records += added
+                skipped_records += skipped
+                imported_projects.add(project_dir_name)
+                if project_dir_name in incoming_path_map:
+                    merged_path_map[project_dir_name] = incoming_path_map[project_dir_name]
+
+            merged_manifest.update({
+                'format_version': 1,
+                'updated_at': datetime.now().astimezone().isoformat(),
+                'source': 'claude-stats',
+                'path_map': merged_path_map,
+            })
+            _save_import_manifest(merged_manifest)
+    except zipfile.BadZipFile:
+        return {'error': 'invalid zip file'}, 400
+    except json.JSONDecodeError:
+        return {'error': 'invalid manifest.json'}, 400
+    except OSError as e:
+        return {'error': str(e)}, 500
+
+    return {
+        'ok': True,
+        'projects': len(imported_projects),
+        'files': imported_files,
+        'added_records': added_records,
+        'skipped_records': skipped_records,
+        'filters': {
+            'project': project_filter,
+            'days': days,
+        },
+    }
 
 @app.route('/api/stats')
 def api_stats():
@@ -289,12 +654,6 @@ def api_stats():
         while check in all_dates_activity:
             streak += 1
             check = (date_cls.fromisoformat(check) - timedelta(days=1)).isoformat()
-
-    # Session durations (group by session_id, use first-message date for attribution)
-    def _fmt_dur(td):
-        mins = int(td.total_seconds() / 60)
-        h, m = divmod(mins, 60)
-        return f"{h}h {m:02d}m" if h else f"{m}m"
 
     # Active time = union of [dt_start, dt_local] request intervals across all records
     # dt_start = parent user message timestamp, dt_local = assistant response timestamp
@@ -462,6 +821,7 @@ def api_hourly():
     day_output = sum(r['output_tokens'] for r in records)
     day_input = sum(r['input_tokens'] + r['cache_read'] + r['cache_create'] for r in records)
     day_sessions = len({r['project'] for r in records})
+    day_models_used = len({r['model'] for r in records if r['model']})
     model_tok = defaultdict(int)
     proj_tok = defaultdict(int)
     for r in records:
@@ -469,6 +829,23 @@ def api_hourly():
         proj_tok[r['project']] += r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create']
     day_top_model = max(model_tok, key=model_tok.get) if model_tok else ''
     day_top_project = max(proj_tok, key=proj_tok.get) if proj_tok else ''
+
+    day_intervals = []
+    for r in records:
+        if r['dt_start'] and r['dt_local'] and r['dt_local'] > r['dt_start']:
+            day_intervals.append((r['dt_start'], r['dt_local']))
+    day_active = timedelta()
+    if day_intervals:
+        day_intervals.sort()
+        cur_start, cur_end = day_intervals[0]
+        for s, e in day_intervals[1:]:
+            if s <= cur_end:
+                cur_end = max(cur_end, e)
+            else:
+                day_active += cur_end - cur_start
+                cur_start, cur_end = s, e
+        day_active += cur_end - cur_start
+
     return {
         'date': date_str,
         'hours': hours,
@@ -483,6 +860,8 @@ def api_hourly():
         'day_output': day_output,
         'day_input': day_input,
         'day_sessions': day_sessions,
+        'day_active_time': _fmt_dur(day_active),
+        'day_models_used': day_models_used,
         'day_top_model': day_top_model,
         'day_top_project': day_top_project,
     }

@@ -35,7 +35,7 @@
 
     /* Nav */
     .nav { background: var(--nav-bg); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; justify-content: space-between; height: 52px; position: relative; z-index: 100; }
-    .nav-title { color: var(--accent); font-weight: 700; font-size: 16px; letter-spacing: 0.5px; }
+    .nav-title { color: var(--accent); font-weight: 700; font-size: 16px; letter-spacing: 0.5px; background: none; border: none; cursor: pointer; padding: 0; }
     .nav-controls { display: flex; align-items: center; gap: 12px; }
     .project-select { background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
     .project-select:focus { outline: none; border-color: var(--accent); }
@@ -43,6 +43,22 @@
     #theme-toggle:hover { border-color: var(--accent); }
     #reload-btn { background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 5px 9px; border-radius: 6px; font-size: 16px; cursor: pointer; line-height: 1; }
     #reload-btn:hover { border-color: var(--accent); }
+    .nav-btn { background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 5px 9px; border-radius: 6px; font-size: 12px; cursor: pointer; line-height: 1.2; }
+    .nav-btn:hover { border-color: var(--accent); }
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(15, 17, 23, 0.62); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 200; }
+    .modal-backdrop.open { display: flex; }
+    .modal { width: min(460px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; box-shadow: 0 20px 50px rgba(0,0,0,0.28); }
+    .modal-title { font-size: 14px; font-weight: 700; margin-bottom: 14px; color: var(--text-primary); }
+    .modal-grid { display: grid; gap: 12px; }
+    .modal-field { display: grid; gap: 6px; }
+    .modal-label { font-size: 12px; color: var(--text-secondary); }
+    .modal-input { width: 100%; background: var(--input-bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 8px 10px; border-radius: 6px; font-size: 13px; }
+    .modal-input:focus { outline: none; border-color: var(--accent); }
+    .modal-hint { font-size: 11px; color: var(--text-tertiary); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    .modal-status { min-height: 16px; font-size: 12px; color: var(--text-secondary); }
+    .nav-btn.primary { background: #a78bfa22; border-color: var(--accent); color: var(--accent); }
+    .hourly-actions { margin-left: auto; display: flex; gap: 8px; }
     #reload-btn.spinning #reload-icon { animation: spin 0.6s linear infinite; }
     #reload-icon { display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -107,16 +123,67 @@
 </head>
 <body>
   <nav class="nav">
-    <span class="nav-title">⚡ Claude Stats</span>
+    <button class="nav-title" onclick="goHome()">⚡ Claude Stats</button>
     <button id="menu-btn" onclick="toggleMenu()" title="Menu">☰</button>
     <div class="nav-controls" id="navControls">
       <select class="project-select" id="projectSelect" onchange="onProjectChange()">
         <option value="all">All Projects</option>
       </select>
+      <button class="nav-btn" onclick="exportData()" title="Export local Claude data">Export</button>
+      <button class="nav-btn" onclick="triggerImport()" title="Import exported Claude data">Import</button>
       <button id="reload-btn" onclick="reloadStats()" title="Refresh data"><span id="reload-icon">↻</span></button>
       <button id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">☀️</button>
     </div>
   </nav>
+
+  <div class="modal-backdrop" id="export-modal" onclick="closeModalOnBackdrop(event, 'export-modal')">
+    <div class="modal">
+      <div class="modal-title">Export Data</div>
+      <div class="modal-grid">
+        <div class="modal-field">
+          <label class="modal-label" for="export-project">Project</label>
+          <select class="modal-input" id="export-project"></select>
+        </div>
+        <div class="modal-field">
+          <label class="modal-label" for="export-days">Days</label>
+          <input class="modal-input" id="export-days" type="number" min="0" value="0">
+          <div class="modal-hint">`0` means all time.</div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="nav-btn" onclick="closeModal('export-modal')">Cancel</button>
+        <button class="nav-btn primary" onclick="confirmExport()">Download Zip</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="import-modal" onclick="closeModalOnBackdrop(event, 'import-modal')">
+    <div class="modal">
+      <div class="modal-title">Import Data</div>
+      <div class="modal-grid">
+        <div class="modal-field">
+          <label class="modal-label" for="import-file">Zip File</label>
+          <input class="modal-input" id="import-file" type="file" accept=".zip,application/zip" onchange="previewImportFile(event)">
+        </div>
+        <div class="modal-field">
+          <label class="modal-label" for="import-project">Project</label>
+          <select class="modal-input" id="import-project" disabled>
+            <option value="all">All Projects</option>
+          </select>
+        </div>
+        <div class="modal-field">
+          <label class="modal-label" for="import-days">Days</label>
+          <input class="modal-input" id="import-days" type="number" min="0" value="0">
+          <div class="modal-hint">Only import assistant activity within the last N days. `0` means all time.</div>
+        </div>
+        <div class="modal-status" id="import-status"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="nav-btn" onclick="closeModal('import-modal')">Cancel</button>
+        <button class="nav-btn primary" id="import-confirm" onclick="importData()" disabled>Import</button>
+      </div>
+    </div>
+  </div>
 
   <div class="tabs">
     <div class="tab active" onclick="switchTab('overview')">Overview</div>
@@ -193,12 +260,17 @@
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
           <button class="range-btn active" onclick="showDailyChart()">← Back</button>
           <span style="color:var(--text-secondary);font-size:13px">24H 明細：<span id="hourly-date" style="color:var(--accent);font-weight:600"></span></span>
+          <div class="hourly-actions">
+            <button class="nav-btn" id="export-hourly" onclick="exportHourlyImage()" disabled>Download</button>
+          </div>
         </div>
         <div class="kpi-grid" style="margin-bottom:16px">
           <div class="kpi-card orange"><div class="kpi-label">Total Tokens</div><div class="kpi-value" id="hourly-kpi-total">—</div></div>
           <div class="kpi-card teal"><div class="kpi-label">Output Tokens</div><div class="kpi-value" id="hourly-kpi-output">—</div></div>
           <div class="kpi-card blue"><div class="kpi-label">Input Tokens</div><div class="kpi-value" id="hourly-kpi-input">—</div></div>
           <div class="kpi-card pink"><div class="kpi-label">Sessions</div><div class="kpi-value" id="hourly-kpi-sessions">—</div></div>
+          <div class="kpi-card orange"><div class="kpi-label">Active Time</div><div class="kpi-value" id="hourly-kpi-active-time">—</div></div>
+          <div class="kpi-card blue"><div class="kpi-label">Models Used</div><div class="kpi-value" id="hourly-kpi-models-used">—</div></div>
           <div class="kpi-card amber"><div class="kpi-label">Top Model</div><div class="kpi-value" id="hourly-kpi-model" style="font-size:14px">—</div></div>
           <div class="kpi-card green"><div class="kpi-label">Top Project</div><div class="kpi-value" id="hourly-kpi-project" style="font-size:14px">—</div></div>
         </div>
@@ -235,6 +307,8 @@
     let currentTab = 'overview';
     let drilldownSourceTab = null;
     let drilldownSourceScrollY = null;
+    let importPreviewReady = false;
+    let lastHourlyExportState = null;
 
     let currentTheme = 'dark';
 
@@ -290,19 +364,47 @@
       return String(n);
     }
 
+    function setHourlyExportEnabled(enabled) {
+      document.getElementById('export-hourly').disabled = !enabled;
+    }
+
+    function drawRoundRect(ctx, x, y, w, h, r) {
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, r);
+        return;
+      }
+      const rr = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+    }
+
+    function fillProjectSelect(selectId, projects, selectedValue = 'all') {
+      const sel = document.getElementById(selectId);
+      sel.innerHTML = '<option value="all">All Projects</option>';
+      projects.forEach(({ name, path }) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        if (path) opt.title = path;
+        sel.appendChild(opt);
+      });
+      sel.value = projects.some(p => p.name === selectedValue) ? selectedValue : 'all';
+    }
+
     async function loadProjects() {
       try {
         const res = await fetch('/api/projects');
         if (!res.ok) throw new Error('Failed to load projects');
         const data = await res.json();
-        const sel = document.getElementById('projectSelect');
-        data.projects.forEach(({ name, path }) => {
-          const opt = document.createElement('option');
-          opt.value = name;
-          opt.textContent = name;
-          opt.title = path;
-          sel.appendChild(opt);
-        });
+        const prevValue = document.getElementById('projectSelect').value || currentProject;
+        fillProjectSelect('projectSelect', data.projects, prevValue);
+        currentProject = document.getElementById('projectSelect').value;
+        fillProjectSelect('export-project', data.projects, currentProject);
       } catch (e) {
         console.error('loadProjects error:', e);
       }
@@ -352,11 +454,15 @@
     async function showHourlyChart(date) {
       document.getElementById('daily-view').style.display = 'none';
       document.getElementById('hourly-view').style.display = 'block';
+      lastHourlyExportState = null;
+      setHourlyExportEnabled(false);
       document.getElementById('hourly-date').textContent = date;
       document.getElementById('hourly-kpi-total').textContent = '—';
       document.getElementById('hourly-kpi-output').textContent = '—';
       document.getElementById('hourly-kpi-input').textContent = '—';
       document.getElementById('hourly-kpi-sessions').textContent = '—';
+      document.getElementById('hourly-kpi-active-time').textContent = '—';
+      document.getElementById('hourly-kpi-models-used').textContent = '—';
       document.getElementById('hourly-kpi-model').textContent = '—';
       document.getElementById('hourly-kpi-project').textContent = '—';
       destroyChart('hourly');
@@ -370,8 +476,12 @@
         document.getElementById('hourly-kpi-output').textContent = fmtNum(data.day_output);
         document.getElementById('hourly-kpi-input').textContent = fmtNum(data.day_input);
         document.getElementById('hourly-kpi-sessions').textContent = data.day_sessions;
+        document.getElementById('hourly-kpi-active-time').textContent = data.day_active_time || '—';
+        document.getElementById('hourly-kpi-models-used').textContent = data.day_models_used ?? '—';
         document.getElementById('hourly-kpi-model').textContent = data.day_top_model ? fmtModel(data.day_top_model) : '—';
         document.getElementById('hourly-kpi-project').textContent = data.day_top_project || '—';
+        lastHourlyExportState = { date, data, project: currentProject, theme: currentTheme };
+        setHourlyExportEnabled(true);
 
         const c = CHART_COLORS[currentTheme];
         charts['hourly'] = new Chart(document.getElementById('hourlyTokenChart'), {
@@ -414,6 +524,7 @@
       document.getElementById('daily-view').style.display = 'block';
       document.getElementById('hourly-view').style.display = 'none';
       destroyChart('hourly');
+      setHourlyExportEnabled(false);
       if (drilldownSourceTab && drilldownSourceTab !== 'tokens') {
         switchTab(drilldownSourceTab);
       }
@@ -708,6 +819,17 @@
       });
     }
 
+    function goHome() {
+      document.getElementById('daily-view').style.display = 'block';
+      document.getElementById('hourly-view').style.display = 'none';
+      destroyChart('hourly');
+      setHourlyExportEnabled(false);
+      drilldownSourceTab = null;
+      drilldownSourceScrollY = null;
+      switchTab('overview');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
     function _applyTheme(theme) {
       currentTheme = theme;
       document.documentElement.setAttribute('data-theme', theme);
@@ -757,6 +879,242 @@
       btn.classList.add('spinning');
       await loadStats(currentProject, currentRange);
       btn.classList.remove('spinning');
+    }
+
+    function openModal(id) {
+      document.getElementById(id).classList.add('open');
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).classList.remove('open');
+    }
+
+    function closeModalOnBackdrop(event, id) {
+      if (event.target.id === id) closeModal(id);
+    }
+
+    function exportData() {
+      fillProjectSelect(
+        'export-project',
+        Array.from(document.getElementById('projectSelect').options)
+          .slice(1)
+          .map(o => ({ name: o.value, path: o.title })),
+        currentProject
+      );
+      document.getElementById('export-days').value = '0';
+      openModal('export-modal');
+    }
+
+    function confirmExport() {
+      const params = new URLSearchParams({
+        project: document.getElementById('export-project').value,
+        days: document.getElementById('export-days').value || '0',
+        tz: BROWSER_TZ,
+      });
+      closeModal('export-modal');
+      window.location.href = `/api/export?${params.toString()}`;
+    }
+
+    function triggerImport() {
+      importPreviewReady = false;
+      document.getElementById('import-file').value = '';
+      document.getElementById('import-days').value = '0';
+      document.getElementById('import-project').innerHTML = '<option value="all">All Projects</option>';
+      document.getElementById('import-project').disabled = true;
+      document.getElementById('import-status').textContent = '';
+      document.getElementById('import-confirm').disabled = true;
+      openModal('import-modal');
+    }
+
+    async function previewImportFile(event) {
+      const input = event.target;
+      const file = input.files && input.files[0];
+      const status = document.getElementById('import-status');
+      const projectSelect = document.getElementById('import-project');
+      importPreviewReady = false;
+      projectSelect.disabled = true;
+      projectSelect.innerHTML = '<option value="all">All Projects</option>';
+      document.getElementById('import-confirm').disabled = true;
+      if (!file) {
+        status.textContent = '';
+        return;
+      }
+
+      const form = new FormData();
+      form.append('file', file);
+      status.textContent = 'Reading zip contents...';
+
+      try {
+        const res = await fetch('/api/import/preview', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Preview failed');
+        fillProjectSelect('import-project', data.projects, 'all');
+        projectSelect.disabled = false;
+        document.getElementById('import-confirm').disabled = false;
+        importPreviewReady = true;
+        status.textContent = `${data.projects.length} project(s) found in zip`;
+      } catch (e) {
+        status.textContent = `Preview failed: ${e.message}`;
+      }
+    }
+
+    async function importData() {
+      const input = document.getElementById('import-file');
+      const file = input.files && input.files[0];
+      if (!file || !importPreviewReady) return;
+
+      const form = new FormData();
+      form.append('file', file);
+      form.append('project', document.getElementById('import-project').value);
+      form.append('days', document.getElementById('import-days').value || '0');
+      form.append('tz', BROWSER_TZ);
+
+      try {
+        document.getElementById('import-confirm').disabled = true;
+        document.getElementById('import-status').textContent = 'Importing...';
+        const res = await fetch('/api/import', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Import failed');
+        await loadProjects();
+        await loadStats(currentProject, currentRange);
+        closeModal('import-modal');
+        alert(`Import complete: ${data.added_records} new records, ${data.skipped_records} duplicates skipped`);
+      } catch (e) {
+        document.getElementById('import-status').textContent = `Import failed: ${e.message}`;
+        document.getElementById('import-confirm').disabled = false;
+      }
+    }
+
+    async function exportHourlyImage() {
+      if (!lastHourlyExportState) return;
+
+      const { date, data, project } = lastHourlyExportState;
+      const c = CHART_COLORS[currentTheme];
+      const scale = 3;
+      const width = 1200 * scale;
+      const height = 1140 * scale;
+      const pad = 32 * scale;
+      const kpiGap = 12 * scale;
+      const cardRadius = 12 * scale;
+      const cardHeight = 118 * scale;
+      const titleY = pad + 12 * scale;
+      const cardsTop = pad + 108 * scale;
+      const chartTop = cardsTop + cardHeight * 2 + kpiGap + 38 * scale;
+      const chartHeight = 500 * scale;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg') || (currentTheme === 'dark' ? '#0f1117' : '#f0f2f8');
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = c.output;
+      ctx.font = `700 ${24 * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      ctx.fillText('Claude Stats', pad, titleY);
+
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-primary') || (currentTheme === 'dark' ? '#e2e8f0' : '#1a1f3a');
+      ctx.font = `700 ${18 * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      ctx.fillText('24H Token Breakdown', pad, pad + 54 * scale);
+
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary') || c.legendColor;
+      ctx.font = `${12 * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      const scopeText = project === 'all' ? 'All Projects' : project;
+      ctx.fillText(`${date}  •  ${scopeText}  •  PNG export`, pad, pad + 82 * scale);
+
+      const cards = [
+        ['Total Tokens', fmtNum(data.day_tokens), '#fb923c'],
+        ['Output Tokens', fmtNum(data.day_output), '#2dd4bf'],
+        ['Input Tokens', fmtNum(data.day_input), '#60a5fa'],
+        ['Sessions', String(data.day_sessions), '#f472b6'],
+        ['Active Time', data.day_active_time || '—', '#fb923c'],
+        ['Models Used', String(data.day_models_used ?? '—'), '#60a5fa'],
+        ['Top Model', data.day_top_model ? fmtModel(data.day_top_model) : '—', '#f59e0b'],
+        ['Top Project', data.day_top_project || '—', '#34d399'],
+      ];
+      const cols = 4;
+      const cardWidth = Math.floor((width - pad * 2 - kpiGap * (cols - 1)) / cols);
+
+      cards.forEach(([label, value, accent], i) => {
+        const row = Math.floor(i / cols);
+        const col = i % cols;
+        const x = pad + col * (cardWidth + kpiGap);
+        const y = cardsTop + row * (cardHeight + kpiGap);
+        drawRoundRect(ctx, x, y, cardWidth, cardHeight, cardRadius);
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--surface') || (currentTheme === 'dark' ? '#1e2130' : '#ffffff');
+        ctx.fill();
+        ctx.fillStyle = accent;
+        ctx.font = `600 ${11 * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+        ctx.fillText(label.toUpperCase(), x + 18 * scale, y + 30 * scale);
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-primary') || (currentTheme === 'dark' ? '#e2e8f0' : '#1a1f3a');
+        ctx.font = `700 ${(i >= 4 ? 16 : 22) * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+        ctx.fillText(value, x + 18 * scale, y + 76 * scale);
+      });
+
+      const chartCardX = pad;
+      const chartCardY = chartTop;
+      const chartCardW = width - pad * 2;
+      const chartCardH = chartHeight;
+      drawRoundRect(ctx, chartCardX, chartCardY, chartCardW, chartCardH, cardRadius);
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--surface') || (currentTheme === 'dark' ? '#1e2130' : '#ffffff');
+      ctx.fill();
+
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-tertiary') || c.tickColor;
+      ctx.font = `600 ${12 * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      ctx.fillText('HOURLY TOKEN USAGE', chartCardX + 20 * scale, chartCardY + 28 * scale);
+
+      const chartCanvas = document.createElement('canvas');
+      chartCanvas.width = chartCardW - 44 * scale;
+      chartCanvas.height = chartCardH - 62 * scale;
+
+      const exportChart = new Chart(chartCanvas, {
+        type: 'bar',
+        data: {
+          labels: data.slot_labels,
+          datasets: [
+            { label: 'Output', data: data.slot_output, backgroundColor: c.output, stack: 'a' },
+            { label: 'Input', data: data.slot_input, backgroundColor: c.input, stack: 'a' },
+          ]
+        },
+        options: {
+          responsive: false,
+          animation: false,
+          devicePixelRatio: 1,
+          plugins: { legend: { labels: { color: c.legendColor, boxWidth: 14 * scale, font: { size: 12 * scale } } } },
+          scales: {
+            x: {
+              ticks: {
+                color: c.tickColor,
+                font: { size: 11 * scale },
+                callback: (_, i) => i % 4 === 0 ? data.slot_labels[i].slice(0, 2) + ':00' : '',
+                maxRotation: 0,
+              },
+              grid: { color: c.gridColor }
+            },
+            y: {
+              stacked: true,
+              ticks: { color: c.tickColor, font: { size: 11 * scale }, callback: v => fmtNum(v) },
+              grid: { color: c.gridColor }
+            }
+          }
+        }
+      });
+      exportChart.update();
+      ctx.drawImage(chartCanvas, chartCardX + 22 * scale, chartCardY + 42 * scale, chartCanvas.width, chartCanvas.height);
+      exportChart.destroy();
+
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-tertiary') || c.tickColor;
+      ctx.font = `${10 * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      ctx.fillText('High-resolution export: 3600px wide, suitable for 300+ DPI output at typical print sizes.', pad, height - 18 * scale);
+
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `claude-stats-${date}-${project === 'all' ? 'all-projects' : project}-export.png`;
+      a.click();
     }
 
     // Init

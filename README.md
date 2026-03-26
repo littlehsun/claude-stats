@@ -36,6 +36,7 @@ Reads data directly from `~/.claude/projects/` with no setup required beyond Doc
 - **Active time tracking** — measures actual Claude execution time by unioning request intervals across parallel agents (no double-counting)
 - **Project filter** — nav dropdown to scope all charts to a single project
 - **Automatic timezone** — all timestamps converted to your browser's local timezone
+- **Export / Import** — export or import Claude raw data with project and day-range filters, then aggregate multi-machine usage in one dashboard
 - **Dark / Light mode** — toggle via ☀️/🌙 button, saved in `localStorage`
 - **Auto-refresh** — data refreshes every 5 minutes; manual refresh button in nav
 
@@ -82,6 +83,8 @@ pip install -r requirements.txt
 ## Data Source
 
 All data is read locally from `~/.claude/projects/`. Each subdirectory is a project, each `.jsonl` file is a conversation. The app does a two-pass parse per file — first to build a `uuid → timestamp` map, then to extract token usage and compute per-request active time intervals.
+
+To aggregate usage from multiple computers, click `Export` on one machine and `Import` that zip on another. Imported data is merged into a single local store during import, and duplicate assistant events are discarded immediately by message identity so only one copy is retained on disk.
 
 | Field | Source |
 |-------|--------|
