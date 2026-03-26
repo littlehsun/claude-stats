@@ -27,6 +27,7 @@ Reads data directly from `~/.claude/projects/` with no setup required beyond Doc
 - **Daily stacked bar chart** — input + output per day (cache merged into input), click any bar to drill into 15-minute granularity
 - **Output by Model** — daily stacked bar by model
 - **24H drilldown** — 15-minute resolution bar chart with per-day KPIs (total, output, input, sessions, active time, models used, top model, top project)
+- **15-minute slot drilldown** — click any bar in the 24H chart to inspect that slot's projects, models, sessions, and active time
 - **High-resolution export** — download the daily 24H drilldown as a print-ready PNG
 - 7d / 30d / All time range filter
 
@@ -36,10 +37,12 @@ Reads data directly from `~/.claude/projects/` with no setup required beyond Doc
 
 **General**
 - **Active time tracking** — measures actual Claude execution time by unioning request intervals across parallel agents (no double-counting)
+- **File-aware caching** — parsed usage records are cached and automatically invalidated when local or imported source files change
 - **Project filter** — nav dropdown to scope all charts to a single project
 - **Automatic timezone** — all timestamps converted to your browser's local timezone
 - **Export / Import** — export or import Claude raw data with project and day-range filters, then aggregate multi-machine usage in one dashboard
 - **Import preview** — inspect the projects inside an import zip before choosing which project and day range to merge
+- **Report export** — download weekly or monthly HTML reports for the current project scope
 - **Dark / Light mode** — toggle via ☀️/🌙 button, saved in `localStorage`
 - **Auto-refresh** — data refreshes every 5 minutes; manual refresh button in nav
 

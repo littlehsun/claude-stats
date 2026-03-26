@@ -20,6 +20,10 @@ IMPORT_MANIFEST_PATH = IMPORTS_DIR / 'manifest.json'
 _HOST_HOME = Path('/host-home') if Path('/host-home').is_dir() else Path.home()
 
 app = Flask(__name__)
+_USAGE_RECORDS_CACHE = {
+    'signature': None,
+    'by_tz': {},
+}
 
 def _norm(s: str) -> str:
     """Normalize for fuzzy matching: lowercase, collapse non-alphanumeric to '-'."""
@@ -142,6 +146,39 @@ def iter_project_sources():
                 yield proj_dir, path_map
 
 
+def _source_signature():
+    entries = []
+    if PROJECTS_DIR.exists():
+        for proj_dir in sorted(PROJECTS_DIR.iterdir()):
+            if not proj_dir.is_dir():
+                continue
+            entries.append((str(proj_dir), 0, 0))
+            for jf in sorted(proj_dir.glob('*.jsonl')):
+                try:
+                    st = jf.stat()
+                    entries.append((str(jf), st.st_size, st.st_mtime_ns))
+                except OSError:
+                    entries.append((str(jf), -1, -1))
+    if IMPORTED_PROJECTS_DIR.exists():
+        for proj_dir in sorted(IMPORTED_PROJECTS_DIR.iterdir()):
+            if not proj_dir.is_dir():
+                continue
+            entries.append((str(proj_dir), 0, 0))
+            for jf in sorted(proj_dir.glob('*.jsonl')):
+                try:
+                    st = jf.stat()
+                    entries.append((str(jf), st.st_size, st.st_mtime_ns))
+                except OSError:
+                    entries.append((str(jf), -1, -1))
+    if IMPORT_MANIFEST_PATH.exists():
+        try:
+            st = IMPORT_MANIFEST_PATH.stat()
+            entries.append((str(IMPORT_MANIFEST_PATH), st.st_size, st.st_mtime_ns))
+        except OSError:
+            entries.append((str(IMPORT_MANIFEST_PATH), -1, -1))
+    return tuple(entries)
+
+
 def project_dir_to_path(dir_name: str, path_map=None) -> str:
     if path_map and dir_name in path_map:
         return path_map[dir_name]
@@ -167,6 +204,35 @@ def _fmt_dur(td):
     mins = int(td.total_seconds() / 60)
     h, m = divmod(mins, 60)
     return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+def _merge_intervals(intervals):
+    total = timedelta()
+    if not intervals:
+        return total
+    intervals.sort()
+    cur_start, cur_end = intervals[0]
+    for s, e in intervals[1:]:
+        if s <= cur_end:
+            cur_end = max(cur_end, e)
+        else:
+            total += cur_end - cur_start
+            cur_start, cur_end = s, e
+    total += cur_end - cur_start
+    return total
+
+
+def _records_for_project(records, project_filter):
+    return records if project_filter == 'all' else [r for r in records if r['project'] == project_filter]
+
+
+def _cutoff_for_period(period, tz):
+    today_str = datetime.now(tz).strftime('%Y-%m-%d')
+    if period == 'week':
+        return (date_cls.fromisoformat(today_str) - timedelta(days=7)).isoformat()
+    if period == 'month':
+        return (date_cls.fromisoformat(today_str) - timedelta(days=30)).isoformat()
+    return None
 
 
 def _record_identity(d: dict) -> str:
@@ -328,6 +394,16 @@ def load_usage_records(tz=None):
     records = []
     if not PROJECTS_DIR.exists() and not IMPORTED_PROJECTS_DIR.exists():
         return records
+    tz_key = getattr(tz, 'key', None) or str(tz)
+    signature = _source_signature()
+    if _USAGE_RECORDS_CACHE['signature'] != signature:
+        _USAGE_RECORDS_CACHE['signature'] = signature
+        _USAGE_RECORDS_CACHE['by_tz'] = {}
+        _encoded_home_prefix.cache_clear()
+        dir_name_to_path.cache_clear()
+    cached = _USAGE_RECORDS_CACHE['by_tz'].get(tz_key)
+    if cached is not None:
+        return [dict(r) for r in cached]
     seen_record_ids = set()
     for proj_dir, path_map in iter_project_sources():
         project_name = project_dir_to_display_name(proj_dir.name, path_map)
@@ -408,6 +484,7 @@ def load_usage_records(tz=None):
             except Exception as e:
                 app.logger.warning(f"Skipping {jf}: {e}")
                 continue
+    _USAGE_RECORDS_CACHE['by_tz'][tz_key] = [dict(r) for r in records]
     return records
 
 @app.route('/')
@@ -601,6 +678,233 @@ def api_import():
             'project': project_filter,
             'days': days,
         },
+    }
+
+
+@app.route('/api/report')
+def api_report():
+    period = request.args.get('period', 'week')
+    if period not in {'week', 'month'}:
+        return {'error': 'period must be week or month'}, 400
+
+    project_filter = request.args.get('project', 'all')
+    tz = _parse_tz(request.args.get('tz', ''))
+    all_records = load_usage_records(tz)
+    filtered = _records_for_project(all_records, project_filter)
+    cutoff = _cutoff_for_period(period, tz)
+    records = [r for r in filtered if r['date'] != 'unknown' and (cutoff is None or r['date'] >= cutoff)]
+
+    total_tokens = sum(r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create'] for r in records)
+    total_output = sum(r['output_tokens'] for r in records)
+    total_input = sum(r['input_tokens'] + r['cache_read'] + r['cache_create'] for r in records)
+    sessions = len({r['session_id'] or (r['project'], r['date']) for r in records})
+    models_used = len({r['model'] for r in records if r['model']})
+    active_days = len({r['date'] for r in records if r['date'] != 'unknown'})
+    daily_avg = total_tokens // active_days if active_days else 0
+
+    intervals = [(r['dt_start'], r['dt_local']) for r in records if r['dt_start'] and r['dt_local'] and r['dt_local'] > r['dt_start']]
+    active_time = _fmt_dur(_merge_intervals(intervals))
+
+    by_day = defaultdict(int)
+    by_model = defaultdict(int)
+    by_project = defaultdict(int)
+    for r in records:
+        tokens = r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create']
+        by_day[r['date']] += tokens
+        by_model[r['model']] += tokens
+        by_project[r['project']] += tokens
+
+    top_days = sorted(by_day.items(), key=lambda item: (-item[1], item[0]))[:7]
+    top_models = sorted(by_model.items(), key=lambda item: -item[1])[:7]
+    top_projects = sorted(by_project.items(), key=lambda item: -item[1])[:7]
+
+    period_label = 'Weekly' if period == 'week' else 'Monthly'
+    scope_label = project_filter if project_filter != 'all' else 'All Projects'
+    today_label = datetime.now(tz).strftime('%Y-%m-%d')
+
+    def _rows(items, label_key):
+        if not items:
+            return '<tr><td colspan="2">No activity</td></tr>'
+        return ''.join(
+            f"<tr><td>{item[0]}</td><td>{item[1]:,}</td></tr>" if isinstance(item, tuple)
+            else f"<tr><td>{item[label_key]}</td><td>{item['tokens']:,}</td></tr>"
+            for item in items
+        )
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Stats {period_label} Report</title>
+  <style>
+    :root {{
+      --bg: #f4f6fb;
+      --surface: #ffffff;
+      --text: #1a1f3a;
+      --muted: #6b7494;
+      --border: #dde2f0;
+      --accent: #7c5cbf;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }}
+    .page {{ max-width: 1040px; margin: 0 auto; padding: 32px 24px 48px; }}
+    .hero {{ background: linear-gradient(135deg, #ffffff 0%, #f2edff 100%); border: 1px solid var(--border); border-radius: 18px; padding: 28px; margin-bottom: 20px; }}
+    .eyebrow {{ color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }}
+    h1 {{ margin: 10px 0 8px; font-size: 32px; }}
+    .meta {{ color: var(--muted); font-size: 14px; display: flex; gap: 16px; flex-wrap: wrap; }}
+    .grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }}
+    .card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }}
+    .label {{ color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 10px; }}
+    .value {{ font-size: 28px; font-weight: 700; }}
+    .sections {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }}
+    .section-title {{ margin: 0 0 14px; font-size: 16px; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    th, td {{ text-align: left; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px; }}
+    th:last-child, td:last-child {{ text-align: right; }}
+    th {{ color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }}
+    .footer {{ margin-top: 20px; color: var(--muted); font-size: 12px; }}
+    @media print {{
+      body {{ background: #fff; }}
+      .page {{ max-width: none; padding: 16px; }}
+      .hero, .card {{ break-inside: avoid; }}
+    }}
+    @media (max-width: 900px) {{
+      .grid, .sections {{ grid-template-columns: 1fr 1fr; }}
+    }}
+    @media (max-width: 640px) {{
+      .grid, .sections {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <div class="eyebrow">Claude Stats Report</div>
+      <h1>{period_label} Report</h1>
+      <div class="meta">
+        <span>Generated: {today_label}</span>
+        <span>Scope: {scope_label}</span>
+        <span>Window: Last {'7' if period == 'week' else '30'} days</span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card"><div class="label">Total Tokens</div><div class="value">{total_tokens:,}</div></div>
+      <div class="card"><div class="label">Output Tokens</div><div class="value">{total_output:,}</div></div>
+      <div class="card"><div class="label">Input-side Tokens</div><div class="value">{total_input:,}</div></div>
+      <div class="card"><div class="label">Sessions</div><div class="value">{sessions:,}</div></div>
+      <div class="card"><div class="label">Models Used</div><div class="value">{models_used}</div></div>
+      <div class="card"><div class="label">Active Time</div><div class="value">{active_time}</div></div>
+      <div class="card"><div class="label">Daily Average</div><div class="value">{daily_avg:,}</div></div>
+      <div class="card"><div class="label">Active Days</div><div class="value">{active_days}</div></div>
+    </section>
+
+    <section class="sections">
+      <div class="card">
+        <h2 class="section-title">Top Days</h2>
+        <table>
+          <thead><tr><th>Day</th><th>Tokens</th></tr></thead>
+          <tbody>{_rows(top_days, 'date')}</tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2 class="section-title">Top Models</h2>
+        <table>
+          <thead><tr><th>Model</th><th>Tokens</th></tr></thead>
+          <tbody>{_rows(top_models, 'model')}</tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2 class="section-title">Top Projects</h2>
+        <table>
+          <thead><tr><th>Project</th><th>Tokens</th></tr></thead>
+          <tbody>{_rows(top_projects, 'project')}</tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="footer">Open this file in a browser to view, print, or save as PDF.</div>
+  </div>
+</body>
+</html>
+"""
+    buf = io.BytesIO(html.encode('utf-8'))
+    return send_file(
+        buf,
+        mimetype='text/html; charset=utf-8',
+        as_attachment=True,
+        download_name=f"claude-stats-{period}-report-{today_label}.html",
+    )
+
+
+@app.route('/api/slot')
+def api_slot():
+    date_str = request.args.get('date')
+    slot_raw = request.args.get('slot')
+    project_filter = request.args.get('project', 'all')
+    if not date_str or slot_raw is None:
+        return {'error': 'date and slot required'}, 400
+    try:
+        slot = int(slot_raw)
+    except ValueError:
+        return {'error': 'slot must be an integer'}, 400
+    if slot < 0 or slot > 95:
+        return {'error': 'slot must be between 0 and 95'}, 400
+
+    tz = _parse_tz(request.args.get('tz', ''))
+    records = _records_for_project(load_usage_records(tz), project_filter)
+    slot_records = []
+    for r in records:
+        if r['date'] != date_str or r['hour'] == 'unknown' or r['minute'] == 'unknown':
+            continue
+        record_slot = int(r['hour']) * 4 + int(r['minute']) // 15
+        if record_slot == slot:
+            slot_records.append(r)
+
+    slot_label = f"{slot//4:02d}:{(slot%4)*15:02d}"
+    total_tokens = sum(r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create'] for r in slot_records)
+    output_tokens = sum(r['output_tokens'] for r in slot_records)
+    input_tokens = sum(r['input_tokens'] + r['cache_read'] + r['cache_create'] for r in slot_records)
+    sessions = len({r['session_id'] or (r['project'], r['hour'], r['minute']) for r in slot_records})
+    models_used = len({r['model'] for r in slot_records if r['model']})
+    active_time = _fmt_dur(_merge_intervals([
+        (r['dt_start'], r['dt_local'])
+        for r in slot_records
+        if r['dt_start'] and r['dt_local'] and r['dt_local'] > r['dt_start']
+    ]))
+
+    project_totals = defaultdict(int)
+    model_totals = defaultdict(int)
+    session_rows = []
+    for r in slot_records:
+        tokens = r['input_tokens'] + r['output_tokens'] + r['cache_read'] + r['cache_create']
+        project_totals[r['project']] += tokens
+        model_totals[r['model']] += tokens
+        session_rows.append({
+            'session_id': r['session_id'] or '—',
+            'project': r['project'],
+            'model': r['model'],
+            'time': r['dt_local'].strftime('%H:%M') if r['dt_local'] else f"{r['hour']}:{r['minute']}",
+            'tokens': tokens,
+            'output': r['output_tokens'],
+            'input': r['input_tokens'] + r['cache_read'] + r['cache_create'],
+        })
+    session_rows.sort(key=lambda item: (-item['tokens'], item['time']))
+
+    return {
+        'date': date_str,
+        'slot': slot,
+        'slot_label': slot_label,
+        'total_tokens': total_tokens,
+        'output_tokens': output_tokens,
+        'input_tokens': input_tokens,
+        'sessions': sessions,
+        'models_used': models_used,
+        'active_time': active_time,
+        'top_projects': [{'project': p, 'tokens': t} for p, t in sorted(project_totals.items(), key=lambda item: -item[1])[:6]],
+        'top_models': [{'model': m, 'tokens': t} for m, t in sorted(model_totals.items(), key=lambda item: -item[1])[:6]],
+        'sessions_rows': session_rows[:12],
     }
 
 @app.route('/api/stats')
